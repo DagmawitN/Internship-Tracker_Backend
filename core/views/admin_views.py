@@ -1,18 +1,13 @@
-from rest_framework import generics, status
+from rest_framework import generics, status,viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from core.models import Company, UserRole
 from django.contrib.auth import get_user_model
+from core.permissions import IsAdminUser
 
 User = get_user_model()
 
 # Custom permission: only Admin can approve companies
-from rest_framework.permissions import BasePermission
-
-class IsAdminUser(BasePermission):
-    def has_permission(self, request, view):
-        return bool(request.user and request.user.role and request.user.role.role_name == 'ADMIN')
-
 
 class CompanyApprovalView(generics.UpdateAPIView):
     permission_classes = [IsAuthenticated, IsAdminUser]
