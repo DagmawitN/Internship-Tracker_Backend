@@ -95,7 +95,7 @@ class Student(TimeStampedModel):
     
 
     def __str__(self):
-        return f"{self.student_number} - {self.user}"
+        return f"{self.student_id} - {self.user}"
 
 
 class Internship(TimeStampedModel):
@@ -249,3 +249,12 @@ class AdvisorEvaluation(TimeStampedModel):
 
 class Meta:
     pass
+
+class PreRegisteredStudent(models.Model):
+    name = models.CharField(max_length = 100, unique = True)
+    student_id = models.CharField(max_length = 12 , unique = True)
+    department = models.ForeignKey(Department,on_delete = models.CASCADE)
+    is_used = models.BooleanField(default = False)
+    
+    def __str__(self):
+        return f"{self.name}({self.student_id})"

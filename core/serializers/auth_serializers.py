@@ -51,3 +51,7 @@ class CompanyRegistrationSerializer(serializers.ModelSerializer):
         user = UserSerializer.create(UserSerializer(), validated_data=user_data)
         company = Company.objects.create(**validated_data)
         return company
+
+class LoginSerializer(serializers.Serializer):
+    email = serializers.CharField()
+    password = serializers.CharField(write_only=True)
