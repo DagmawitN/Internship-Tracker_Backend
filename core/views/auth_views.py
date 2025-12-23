@@ -4,7 +4,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model, authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
-from core.models import UserRole, Student, Department
+from core.models import UserRole, Student, Department, PreRegisteredStudent
 from django.db import connection
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -12,6 +12,7 @@ from core.models import UserRole, Student, Company
 from core.serializers.auth_serializers import (
     StudentRegistrationSerializer,
     CompanyRegistrationSerializer,
+    LoginSerializer,
 )
 
 User = get_user_model()
@@ -37,48 +38,43 @@ class StudentRegisterView(generics.CreateAPIView):
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        serializer.is_valid(raise_exception = True)
 
         user_data = serializer.validated_data.pop('user')
         student_id = serializer.validated_data['student_id']
         department = serializer.validated_data['department']
+        
 
-        # Check eligibility directly in the database
-        # Example: using raw SQL, adjust table/column names to match your DB
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT COUNT(*) 
-                FROM pre_registered_students
-                WHERE username = %s AND student_id = %s AND department_id = %s
-            """, [user_data['username'], student_id, department.id])
-            eligible_count = cursor.fetchone()[0]
-
-        if eligible_count == 0:
+        # Verify if PreRegisteredStudent exists
+        pre_reg = PreRegisteredStudent.objects.filter(
+            
+            student_id = student_id,
+            department = department,
+            is_used = False # Only allow registration once
+            ).first()
+        if not pre_reg:
             return Response(
-                {"error": "You are not eligible for registration."},
+                {"error": "You are not eligible for registration or already registered."},
                 status=status.HTTP_403_FORBIDDEN
             )
-
-        # Create user
-        role, _ = UserRole.objects.get_or_create(role_name='STUDENT')
+        role,_ = UserRole.objects.get_or_create(role_name = 'STUDENT')
         user = User.objects.create(
-            username=user_data['username'],
-            email=user_data['email'],
-            role=role,
-            phone=user_data.get('phone', '')
+            username = user_data['username'],
+            email = user_data['email'],
+            role = role,
+            phone = user_data.get('phone',''),
         )
         user.set_password(user_data['password'])
         user.save()
-
-        # Create student profile
         Student.objects.create(
-            user=user,
-            department=department,
-            student_id=student_id
+            user = user,
+            department = department,
+            student_id = student_id
         )
+        pre_reg.is_used = True
+        pre_reg.save()
 
         refresh = RefreshToken.for_user(user)
-
         return Response({
             'message': 'Student registered successfully',
             'user_id': user.id,
@@ -87,6 +83,9 @@ class StudentRegisterView(generics.CreateAPIView):
                 'access': str(refresh.access_token),
             }
         }, status=status.HTTP_201_CREATED)
+        
+
+
 # -----------------------------
 # Company Registration
 # -----------------------------
@@ -128,6 +127,7 @@ class CompanyRegisterView(generics.CreateAPIView):
 # -----------------------------
 class LoginView(generics.GenericAPIView):
     permission_classes = [AllowAny]
+    serializer_class = LoginSerializer
 
     def post(self, request, *args, **kwargs):
         email = request.data.get('email')
