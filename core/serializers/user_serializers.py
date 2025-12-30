@@ -14,7 +14,7 @@ class AssignRoleSerializer(serializers.Serializer):
         return value
     def validate_role_name(self,value):
         try:
-            UserRole.objects.role(role_name=value)
+            UserRole.objects.filter(role_name=value).exists()
         except UserRole.DoesNotExist:
             raise serializers.ValidationError("Role with given name does not exist.")
         return value

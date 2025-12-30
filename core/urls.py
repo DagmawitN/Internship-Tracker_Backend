@@ -21,7 +21,8 @@ urlpatterns = [
     path('admin/company/<int:id>/approve/', CompanyApprovalView.as_view(), name='company-approval'),
     path('company/applicants/', CompanyApplicantsListView.as_view(), name='company-applicants'),
     path('company/applicants/<int:id>/', CompanyApplicantActionView.as_view(), name='company-applicant-action'),
-    path('admin/users/assign-role/', UserViewSet.as_view({'post':'action'}), name='assign-role'),
+    path('admin/users/admin-assign-role/',UserViewSet.as_view({'post': 'admin_assign_role'}),name='admin-assign-role'),
+    path('admin/users/coordinator-assign-role/',UserViewSet.as_view({'post': 'coordinator_assign_role'}),name='coordinator-assign-role'),
     path('companies/verified/', VerifiedCompaniesListView.as_view(), name='verified-companies'),
     path('companies/<int:company_id>/apply/', InternshipApplicationView.as_view(), name='company-apply'),
 ]
