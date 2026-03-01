@@ -4,18 +4,19 @@ from core.permissions import IsAdminUser
 
 
 class AssignRoleSerializer(serializers.Serializer):
-    user_id = serializers.IntegerField()
-    role_name = serializers.CharField(max_length=15)
-    def validate_user(self,value):
-        try:
-            User.objects.get(id=value)
-        except User.DoesNotExist:
-            raise serializers.ValidationError("User with given ID does not exist.")
-        return value
-    def validate_role_name(self,value):
-        try:
-            UserRole.objects.filter(role_name=value).exists()
-        except UserRole.DoesNotExist:
-            raise serializers.ValidationError("Role with given name does not exist.")
-        return value
+    user = serializers.SlugRelatedField(
+        queryset=User.objects.all(),
+        slug_field="email"
+    )
+    role = serializers.SlugRelatedField(
+        queryset=UserRole.objects.all(),
+        slug_field="role_name"
+    )
 
+    def save(self):
+        user = self.validated_data["user"]
+        role = self.validated_data["role"]
+        user.role = role
+        user.save()
+        return user
+    

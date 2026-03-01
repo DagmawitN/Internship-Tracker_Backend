@@ -13,6 +13,7 @@ from core.serializers.auth_serializers import (
     StudentRegistrationSerializer,
     CompanyRegistrationSerializer,
     LoginSerializer,
+    LogoutSerializer,
 )
 
 User = get_user_model()
@@ -130,23 +131,21 @@ class LoginView(generics.GenericAPIView):
     serializer_class = LoginSerializer
 
     def post(self, request, *args, **kwargs):
-        email = request.data.get('email')
-        password = request.data.get('password')
+        serializer = self.get_serializer(data = request.data)
+        serializer.is_valid(raise_exception = True)
 
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
-
-        if not user.check_password(password):
-            return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
-
+        user = serializer.validated_data["user"]
         tokens = get_tokens_for_user(user)
+
         return Response({
-            'user_id': user.id,
-            'email': user.email,
-            'tokens': tokens
+            "user_id": user.id,
+            "email": user.email,
+            "role": user.role.role_name,
+            "tokens": tokens
         }, status=status.HTTP_200_OK)
+       
+
+      
 
 
 # -----------------------------
@@ -156,7 +155,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 class LogoutView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
-
+    serializer_class = LogoutSerializer
     def post(self, request, *args, **kwargs):
         refresh_token = request.data.get('refresh')
         if not refresh_token:

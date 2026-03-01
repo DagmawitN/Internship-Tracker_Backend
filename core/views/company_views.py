@@ -4,6 +4,7 @@ from core.models import Internship, Company
 from django.contrib.auth import get_user_model
 from core.serializers.company_serializer import CompanySerializer
 from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
 
 
 User = get_user_model()
@@ -58,15 +59,13 @@ class CompanyApplicantActionView(generics.UpdateAPIView):
             'internship_id': internship.id,
             'status': internship.status
         }, status=status.HTTP_200_OK)
-
+    
 class VerifiedCompaniesListView(generics.ListAPIView):
-
     permission_classes = [permissions.IsAuthenticated]
-    queryset = Company.objects.filter(is_active = True)
+    queryset = Company.objects.filter(is_active=True)
     serializer_class = CompanySerializer 
 
-    filter_backends = ['DjangoFilterBackend','SearchFilter', 'OrderingFilter']
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter] 
     search_fields = ['company_name','industry_type']
     ordering_fields = ['created_at','company_name','industry_type']
     ordering = ['company_name']
-

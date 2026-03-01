@@ -3,7 +3,7 @@ from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils import timezone
-
+from .custom_manager import CustomUserManager
 
 class TimeStampedModel(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
@@ -22,12 +22,18 @@ class UserRole(models.Model):
 
 
 class User(AbstractUser):
+    username =  models.CharField(max_length=150, unique=True)
     email = models.EmailField(unique=True)
     phone = models.CharField(max_length=20, blank=True)
     role = models.ForeignKey(UserRole, on_delete=models.PROTECT, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     last_login = models.DateTimeField(null=True, blank=True)
 
+
+    USERNAME_FIELD = "email"
+    REQUIRED_FIELDS = ["username"]
+
+    objects = CustomUserManager()
   
     def full_name(self):
         return f"{self.first_name} {self.last_name}".strip()
@@ -47,7 +53,7 @@ class Admin(models.Model):
 
 class Department(TimeStampedModel):
     department_code = models.CharField(max_length=20)
-    department_name = models.CharField(max_length=100)
+    department_name = models.CharField(max_length=100,unique = "True")
     college = models.CharField(max_length=100, blank=True)
 
     def __str__(self):

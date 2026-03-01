@@ -1,7 +1,8 @@
 # core/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from core.models import Student, Company, UserRole
+from core.models import Student, Company, UserRole, Department
+from django.contrib.auth import authenticate
 
 User = get_user_model()
 
@@ -11,7 +12,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'password', 'full_name', 'phone']
+        fields = ['id', 'username', 'email', 'password', 'phone',"first_name", "last_name"]
 
     def create(self, validated_data):
         password = validated_data.pop('password')
@@ -23,6 +24,10 @@ class UserSerializer(serializers.ModelSerializer):
 
 class StudentRegistrationSerializer(serializers.ModelSerializer):
     user = UserSerializer()
+    department = serializers.SlugRelatedField(
+        queryset=Department.objects.all(),
+        slug_field="department_name"
+    )
 
     class Meta:
         model = Student
@@ -55,3 +60,27 @@ class CompanyRegistrationSerializer(serializers.ModelSerializer):
 class LoginSerializer(serializers.Serializer):
     email = serializers.CharField()
     password = serializers.CharField(write_only=True)
+    role  = serializers.CharField(required = True)
+
+    def validate(self, attrs):
+        email = attrs.get("email")
+        password = attrs.get("password")
+        expected_role = attrs.get("role")
+
+        user = authenticate(email=email, password=password)
+
+        if not user:
+            raise serializers.ValidationError("Invalid credentials")
+        if not user.role:
+            raise serializers.ValidationError("User has no assigned role")
+        
+        if user.role.role_name != expected_role:
+            raise serializers.ValidationError(f"User role mismatch. Expected {expected_role}, got {user.role.name}")
+        
+        attrs["user"] = user
+
+        return attrs
+    
+
+class LogoutSerializer(serializers.Serializer):
+    refresh = serializers.CharField()
