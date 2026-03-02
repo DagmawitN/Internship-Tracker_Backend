@@ -1,6 +1,6 @@
 from rest_framework import generics, permissions,status
 from rest_framework.response import Response
-from core.models import Internship, Company
+from core.models import InternshipApplication, Company
 from django.contrib.auth import get_user_model
 from core.serializers.company_serializer import CompanySerializer
 from django_filters.rest_framework import DjangoFilterBackend
@@ -19,7 +19,7 @@ class CompanyApplicantsListView(generics.ListAPIView):
             return Response({'error': 'You are not associated with any company.'}, status=403)
 
         # Get pending applicants
-        internships = Internship.objects.filter(company=company, status='PENDING')
+        internships = InternshipApplication.objects.filter(company=company, status='PENDING')
         data = [
             {
                 'internship_id': i.id,
@@ -36,7 +36,7 @@ class CompanyApplicantsListView(generics.ListAPIView):
 
 class CompanyApplicantActionView(generics.UpdateAPIView):
     permission_classes = [permissions.IsAuthenticated]
-    queryset = Internship.objects.all()
+    queryset = InternshipApplication.objects.all()
     lookup_field = 'id'  # internship id
 
     def patch(self, request, *args, **kwargs):

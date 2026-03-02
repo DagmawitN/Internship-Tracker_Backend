@@ -103,38 +103,70 @@ class Student(TimeStampedModel):
     def __str__(self):
         return f"{self.student_id} - {self.user}"
 
-
-class Internship(TimeStampedModel):
- 
-    STATUS_CHOICES = [
-        ("PENDING", "Pending"),
-        ("APPROVED", "Approved"),
-        ("REJECTED", "Rejected"),
-        ("ONGOING", "Ongoing"),
-        ("COMPLETED", "Completed"),
-        ("CANCELLED", "Cancelled"),
-    ]
-
-    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="internships")
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="internships")
-    supervisor = models.ForeignKey(Supervisor, on_delete=models.SET_NULL, null=True, blank=True, related_name="internships")
-    mentor = models.ForeignKey(CompanyMentor, on_delete=models.SET_NULL, null=True, blank=True, related_name="internships")
-    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default="PENDING")
-    start_date = models.DateField(null=True, blank=True)
-    end_date = models.DateField(null=True, blank=True)
-    application_date = models.DateTimeField(null=True, blank=True)
-    approval_date = models.DateTimeField(null=True, blank=True)
-    completion_date = models.DateTimeField(null=True, blank=True)
-    total_hours = models.IntegerField(null=True, blank=True)
-    notes = models.TextField(blank=True)
+class Skill(models.Model):
+    name = models.CharField(max_length = 100, unique = True)
 
     def __str__(self):
-        return f"Internship {self.id} - {self.student}"
+        return self.name
 
+class InternshipPosition(TimeStampedModel):
+    company = models.ForeignKey(
+        Company, 
+        on_delete=models.CASCADE,
+        related_name="internship_positions",
+        db_index = True)
+    
+    title = models.CharField(blank = False, max_length = 200)
+    description = models.TextField()
+
+    required_skills = models.ManyToManyField(
+        Skill,
+        related_name = "internship_positions",
+        blank = True)
+    
+    duration_weeks = models.PositiveIntegerField(null = True, blank = True)
+    application_deadline = models.DateField(null = True,blank = True)
+    is_active = models.BooleanField(default = True, db_index = True)
+    max_applicants = models.PositiveIntegerField(null = True, blank = True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["company","is_active"]),
+            models.Index(fields=["application_deadline"])
+        ]
+    
+    def __str__(self):
+        return f"{self.title} - {self.company.company_name}"
+
+
+class InternshipApplication(TimeStampedModel):
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name="applications")
+    position = models.ForeignKey(
+        InternshipPosition, on_delete=models.CASCADE, related_name="applications"
+    )
+    supervisor = models.ForeignKey(
+        Supervisor, on_delete=models.SET_NULL, null=True, blank=True, related_name="applications"
+    )
+    mentor = models.ForeignKey(
+        CompanyMentor, on_delete=models.SET_NULL, null=True, blank=True, related_name="applications"
+    )
+    status = models.CharField(
+        max_length=30, default="pending"
+    )  # pending, approved, ongoing, completed, cancelled
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    
+    class Meta:
+        unique_together = ("student", "position")
+
+    def __str__(self):
+        return f"{self.student} -> {self.position.title} ({self.status})"
 
 class Attendance(TimeStampedModel):
   
-    internship = models.ForeignKey(Internship, on_delete=models.CASCADE, related_name="attendances")
+    internship = models.ForeignKey(InternshipApplication, on_delete=models.CASCADE, related_name="attendances")
     date = models.DateField()
     check_in_time = models.TimeField(null=True, blank=True)
     check_out_time = models.TimeField(null=True, blank=True)
@@ -167,7 +199,7 @@ class Report(TimeStampedModel):
         ("OTHER", "Other"),
     ]
 
-    internship = models.ForeignKey(Internship, on_delete=models.CASCADE, related_name="reports")
+    internship = models.ForeignKey(InternshipApplication, on_delete=models.CASCADE, related_name="reports")
     week_number = models.IntegerField(null=True, blank=True)
     submission_date = models.DateTimeField(null=True, blank=True)
     report_type = models.CharField(max_length=30, choices=REPORT_TYPES, default="WEEKLY")
@@ -210,7 +242,7 @@ class Evaluation(TimeStampedModel):
         ("OTHER", "Other"),
     ]
 
-    internship = models.ForeignKey(Internship, on_delete=models.CASCADE, related_name="evaluations")
+    internship = models.ForeignKey(InternshipApplication, on_delete=models.CASCADE, related_name="evaluations")
     supervisor = models.ForeignKey(Supervisor, on_delete=models.SET_NULL, null=True, blank=True)
     evaluation_type = models.CharField(max_length=30, choices=EVAL_TYPES, default="FINAL")
     technical_skills_score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
@@ -231,7 +263,7 @@ class AdvisorAssignment(TimeStampedModel):
     coordinator = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="coordinator_assignments")
     advisor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="advisor_assignments")
     student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="advisor_for_student")
-    internship = models.ForeignKey(Internship, on_delete=models.CASCADE, related_name="advisor_assignments")
+    internship = models.ForeignKey(InternshipApplication, on_delete=models.CASCADE, related_name="advisor_assignments")
     assigned_at = models.DateTimeField(auto_now_add=True)
     role = models.CharField(max_length=30, choices=[("ADVISOR", "Advisor"), ("EXAMINER", "Examiner")], default="ADVISOR")
 
@@ -245,7 +277,7 @@ class AdvisorAssignment(TimeStampedModel):
 class AdvisorEvaluation(TimeStampedModel):
    
     advisor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="advisor_evaluations")
-    internship = models.ForeignKey(Internship, on_delete=models.CASCADE, related_name="advisor_evaluations")
+    internship = models.ForeignKey(InternshipApplication, on_delete=models.CASCADE, related_name="advisor_evaluations")
     evaluation_date = models.DateField(null=True, blank=True)
     score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     comments = models.TextField(blank=True)

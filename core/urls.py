@@ -9,7 +9,7 @@ from core.views.auth_views import (
 from core.views.admin_views import CompanyApprovalView
 from core.views.company_views import CompanyApplicantsListView, CompanyApplicantActionView , VerifiedCompaniesListView 
 from core.views.user_views import UserViewSet, StudentsList,UsersList
-from core.views.internship_views import InternshipApplicationView
+from core.views.internship_views import InternshipApplicationView,InternshipListCreateView,InternshipRetrieveUpdateView
 
 
 
@@ -26,5 +26,8 @@ urlpatterns = [
     path('companies/verified/', VerifiedCompaniesListView.as_view(), name='verified-companies'),
     path('companies/<int:company_id>/apply/', InternshipApplicationView.as_view(), name='company-apply'),
     path('students/',StudentsList.as_view(),name='user-list'),
-    path('users',UsersList.as_view(),name='users-list')
+    path('users',UsersList.as_view(),name='users-list'),
+     path("internships/", InternshipListCreateView.as_view(), name="internship-list-create"),
+    path("internships/<int:pk>/", InternshipRetrieveUpdateView.as_view(), name="internship-detail"),
+
 ]
