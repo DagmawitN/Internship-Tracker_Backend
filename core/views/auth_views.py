@@ -4,7 +4,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model, authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
-from core.models import UserRole, Student, Department, PreRegisteredStudent
+from core.models import UserRole, Student, Department, PreRegisteredStudent,CompanyMentor
 from django.db import connection
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -97,8 +97,9 @@ class CompanyRegisterView(generics.CreateAPIView):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        company_data = serializer.validated_data
 
-        user_data = serializer.validated_data.pop('user')
+        user_data = company_data.pop('user')
         # create user for company login
         role, _ = UserRole.objects.get_or_create(role_name='COMPANY')
         user = User.objects.create(
@@ -115,10 +116,13 @@ class CompanyRegisterView(generics.CreateAPIView):
         # create company record
         company = Company.objects.create(**serializer.validated_data)
 
+        CompanyMentor.objects.create(user = user,company = company)
+
         tokens = get_tokens_for_user(user)
         return Response({
             'message': 'Company registered successfully',
             'user_id': user.id,
+            'company_id': company.id,
             'tokens': tokens
         }, status=status.HTTP_201_CREATED)
 

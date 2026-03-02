@@ -1,7 +1,7 @@
 # core/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from core.models import Student, Company, UserRole, Department
+from core.models import Student, Company, UserRole, Department,CompanyMentor
 from django.contrib.auth import authenticate
 
 User = get_user_model()
@@ -55,6 +55,7 @@ class CompanyRegistrationSerializer(serializers.ModelSerializer):
         user_data['role'] = role
         user = UserSerializer.create(UserSerializer(), validated_data=user_data)
         company = Company.objects.create(**validated_data)
+        CompanyMentor.objects.create(user=user, company=company)
         return company
 
 class LoginSerializer(serializers.Serializer):

@@ -2,13 +2,16 @@ from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 
-from core.models import Internship, Company
-from core.serializers.internship_serializer import InternshipApplicationSerializer
-from core.permissions import IsStudentUser
+
+from core.models import InternshipApplication, InternshipPosition, Company,CompanyMentor
+from core.serializers.internship_serializer import InternshipApplicationSerializer,InternshipPositionSerializer
+from core.permissions import IsStudentUser,IsCompanyMentor,IsMentorOfCompany
 
 class InternshipApplicationView(generics.CreateAPIView):
-    queryset = Internship.objects.all()
+    queryset = InternshipApplication.objects.all()
     serializer_class = InternshipApplicationSerializer
     permission_classes = [IsAuthenticated,IsStudentUser]
 
@@ -44,4 +47,33 @@ class InternshipApplicationView(generics.CreateAPIView):
         )
 
 
+class InternshipListCreateView(generics.ListCreateAPIView):
+    serializer_class = InternshipPositionSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = InternshipPosition.objects.all()
 
+    def get_queryset(self):
+        return InternshipPosition.objects.filter(is_active=True)
+
+    def perform_create(self, serializer):
+        if not CompanyMentor.objects.filter(user=self.request.user).exists():
+            raise PermissionDenied("Only company mentors can create internships")
+
+        mentor = CompanyMentor.objects.get(user=self.request.user)
+        serializer.save(company=mentor.company)
+
+
+class InternshipRetrieveUpdateView(generics.RetrieveUpdateAPIView):
+    serializer_class = InternshipPositionSerializer
+    permission_classes = [IsAuthenticated, IsCompanyMentor, IsMentorOfCompany]
+    queryset = InternshipPosition.objects.all()
+
+    def perform_update(self, serializer):
+        mentor = CompanyMentor.objects.get(user=self.request.user)
+
+        if serializer.instance.company != mentor.company:
+            raise PermissionDenied(
+                "You cannot update internships from another company"
+            )
+
+        serializer.save()
