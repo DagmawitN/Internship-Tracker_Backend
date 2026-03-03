@@ -5,11 +5,13 @@ from django.contrib.auth import get_user_model
 from core.serializers.company_serializer import CompanySerializer
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.views import APIView
 
 
 User = get_user_model()
 
-class CompanyApplicantsListView(generics.ListAPIView):
+
+class CompanyApplicantsListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request, *args, **kwargs):
@@ -34,13 +36,13 @@ class CompanyApplicantsListView(generics.ListAPIView):
 
 
 
-class CompanyApplicantActionView(generics.UpdateAPIView):
+class CompanyApplicantActionView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     queryset = InternshipApplication.objects.all()
     lookup_field = 'id'  # internship id
 
     def patch(self, request, *args, **kwargs):
-        internship = self.get_object()
+        internship = InternshipApplication.objects.get(id=kwargs['id'])
 
         # Check if the internship belongs to the company
         company = getattr(request.user, 'company_profile', None)
