@@ -61,23 +61,16 @@ class CompanyRegistrationSerializer(serializers.ModelSerializer):
 class LoginSerializer(serializers.Serializer):
     email = serializers.CharField()
     password = serializers.CharField(write_only=True)
-    role  = serializers.CharField(required = True)
 
     def validate(self, attrs):
         email = attrs.get("email")
         password = attrs.get("password")
-        expected_role = attrs.get("role")
 
         user = authenticate(email=email, password=password)
 
         if not user:
             raise serializers.ValidationError("Invalid credentials")
-        if not user.role:
-            raise serializers.ValidationError("User has no assigned role")
-        
-        if user.role.role_name != expected_role:
-            raise serializers.ValidationError(f"User role mismatch. Expected {expected_role}, got {user.role.name}")
-        
+       
         attrs["user"] = user
 
         return attrs
