@@ -285,10 +285,8 @@ class AdvisorEvaluation(TimeStampedModel):
     def __str__(self):
         return f"AdvisorEvaluation {self.id} by {self.advisor} for {self.internship}"
 
-class Meta:
-    pass
 
-class PreRegisteredStudent(models.Model):
+class PreRegisteredStudent(TimeStampedModel):
     name = models.CharField(max_length = 100, unique = True)
     student_id = models.CharField(max_length = 12 , unique = True)
     department = models.ForeignKey(Department,on_delete = models.CASCADE)
