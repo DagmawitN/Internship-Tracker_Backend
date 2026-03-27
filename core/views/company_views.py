@@ -2,39 +2,29 @@ from rest_framework import generics, permissions,status
 from rest_framework.response import Response
 from core.models import InternshipApplication, Company
 from django.contrib.auth import get_user_model
-from core.serializers.company_serializer import CompanySerializer
+from core.serializers.company_serializer import CompanySerializer,CompanyApplicationSerializer
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.views import APIView
+from core.permissions import IsCompanyMentor,IsMentorOfCompany
+from rest_framework import generics
 
 
 User = get_user_model()
 
+class CompanyApplicantsListView(generics.ListAPIView):
+    serializer_class = CompanyApplicationSerializer
+    permission_classes = [permissions.IsAuthenticated, IsCompanyMentor, IsMentorOfCompany]
 
-class CompanyApplicantsListView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get(self, request, *args, **kwargs):
-        # Assume company user has one company
-        company = getattr(request.user, 'company_profile', None)
-        if not company:
-            return Response({'error': 'You are not associated with any company.'}, status=403)
+    def get_queryset(self):
+        company_id = self.kwargs['company_id']
+        queryset = InternshipApplication.objects.filter(position__company_id = company_id)
 
-        # Get pending applicants
-        internships = InternshipApplication.objects.filter(company=company, status='PENDING')
-        data = [
-            {
-                'internship_id': i.id,
-                'student_id': i.student.student_profile.student_id,
-                'student_name': i.student.full_name(),
-                'department': i.student.student_profile.department.department_name,
-                'application_date': i.application_date,
-                'status': i.status
-            } for i in internships
-        ]
-        return Response({'applicants': data})
-
-
+        status = self.request.query_params.get('status')
+        if status:
+            status_list = [s.strip().upper() for s in status.split(',')]
+            queryset = queryset.filter(status__in = status_list)
+        return queryset
 
 class CompanyApplicantActionView(APIView):
     permission_classes = [permissions.IsAuthenticated]

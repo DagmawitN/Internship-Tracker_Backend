@@ -1,9 +1,10 @@
-# core/models.py
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils import timezone
 from .custom_manager import CustomUserManager
+from django.utils.translation import gettext_lazy as _
+
 
 class TimeStampedModel(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
@@ -141,6 +142,13 @@ class InternshipPosition(TimeStampedModel):
 
 
 class InternshipApplication(TimeStampedModel):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", _("Pending")
+        APPROVED = "APPROVED", _("Approved")
+        ONGOING = "ONGOING", _("Ongoing")
+        COMPLETED = "COMPLETED", _("Completed")
+        CANCELLED = "CANCELLED", _("Cancelled")
+
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name="applications")
     position = models.ForeignKey(
         InternshipPosition, on_delete=models.CASCADE, related_name="applications"
@@ -152,8 +160,10 @@ class InternshipApplication(TimeStampedModel):
         CompanyMentor, on_delete=models.SET_NULL, null=True, blank=True, related_name="applications"
     )
     status = models.CharField(
-        max_length=30, default="pending"
-    )  # pending, approved, ongoing, completed, cancelled
+        max_length= 30,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True)
@@ -290,6 +300,15 @@ class PreRegisteredStudent(TimeStampedModel):
     name = models.CharField(max_length = 100, unique = True)
     student_id = models.CharField(max_length = 12 , unique = True)
     department = models.ForeignKey(Department,on_delete = models.CASCADE)
+    is_used = models.BooleanField(default = False)
+    
+    def __str__(self):
+        return f"{self.name}({self.student_id})"
+    
+class PreRegisteredStaff(TimeStampedModel):
+    name = models.CharField(max_length = 100, unique = True)
+    department = models.ForeignKey(Department,on_delete = models.CASCADE)
+    email = models.EmailField(unique=True)
     is_used = models.BooleanField(default = False)
     
     def __str__(self):
