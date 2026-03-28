@@ -1,8 +1,9 @@
 # core/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from core.models import Student, Company, UserRole, Department,CompanyMentor
+from core.models import Student, Company, UserRole, Department,CompanyMentor,PreRegisteredStaff
 from django.contrib.auth import authenticate
+
 
 User = get_user_model()
 
@@ -78,3 +79,18 @@ class LoginSerializer(serializers.Serializer):
 
 class LogoutSerializer(serializers.Serializer):
     refresh = serializers.CharField()
+
+
+class StaffRegistrationSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    username = serializers.CharField(max_length=150)
+    password = serializers.CharField(write_only=True)
+    
+    def validate(self, attrs):
+        email = attrs.get("email")
+        pre_reg = PreRegisteredStaff.objects.filter(email=email, is_used=False).first()
+        if not pre_reg:
+            raise serializers.ValidationError("This staff is not pre-registered or already used.")
+        attrs['pre_reg'] = pre_reg
+        return attrs
+    

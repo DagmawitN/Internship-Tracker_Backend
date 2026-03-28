@@ -23,10 +23,21 @@ class InternshipApplicationSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         start_date = attrs.get('start_date')
         end_date = attrs.get('end_date')
-        request = self.context['request']
-        student = request.user
-        position = attrs.get('position')
+        student = self.context['request'].user
+        position_id = self.context.get('position_id')
+        
+        try:
+            position = InternshipPosition.objects.get(id=position_id)
+        except InternshipPosition.DoesNotExist:
+            raise serializers.ValidationError("Internship position does not exist.")
+        attrs['position'] = position
+
         company = position.company
+
+        if not company.is_active:
+            raise serializers.ValidationError(
+            "This company is not verified and cannot accept applications."
+        )
 
         if end_date <= start_date:
             raise serializers.ValidationError("End date must be after start date")
@@ -45,11 +56,10 @@ class InternshipApplicationSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
-        student = self.context['request'].user
-        company = self.context['company']  # Passed from view
+        position = validated_data["position"]
         internship = InternshipApplication.objects.create(
-            student=student,
-            company=company,
+            student=self.context['request'].user,
+            company=position.company,
             status='PENDING',
             application_date=timezone.now(),
             **validated_data
