@@ -8,7 +8,7 @@ import io
 
 class PreRegisteredStudentAdmin(admin.ModelAdmin):
     list_display = ("name","student_id","department","created_at")
-    change_list_template = "admin/core/preregisteredstudent/change_list.html"
+    change_list_template = "admin/core/preregisteredstudent/change_list_student.html"
     
     def get_urls(self):
         urls = super().get_urls()
@@ -75,6 +75,7 @@ class PreRegisteredStudentAdmin(admin.ModelAdmin):
 
 class PreRegisteredStaffAdmin(admin.ModelAdmin):
     list_display = ("name","email","department","created_at")
+    change_list_template = "admin/core/preregisteredstaff/change_list_staff.html"
     
     def get_urls(self):
         urls = super().get_urls()
@@ -103,6 +104,7 @@ class PreRegisteredStaffAdmin(admin.ModelAdmin):
                 for row in reader:
                     dept_name = row["department"].strip()
                     dept = departments.get(dept_name)
+                    role = row.get("role", "").strip().upper()
                     if not dept:
                         print(f"Skipping {row['name']}: Department '{dept_name}' not found")
                         continue
@@ -111,6 +113,7 @@ class PreRegisteredStaffAdmin(admin.ModelAdmin):
                             name=row["name"].strip(),
                             email=row["email"].strip(),
                             department=dept,
+                            role=role if role in ["COORDINATOR"] else '',
                         )
                     )
                 PreRegisteredStaff.objects.bulk_create(staff_members, ignore_conflicts = True)

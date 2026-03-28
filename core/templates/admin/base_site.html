@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Django Admin - Import Students</title>
+    <title>Django Admin - Import</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <style>
@@ -49,15 +49,6 @@
 <div class="container">
 
 {% block content %}
-
-<h1>Import Students</h1>
-
-<form method="post" enctype="multipart/form-data">
-    {% csrf_token %}
-    {{ form.as_p }}
-
-    <button type="submit">Upload CSV</button>
-</form>
 
 {% endblock %}
 

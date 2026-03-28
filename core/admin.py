@@ -4,13 +4,15 @@ from django.http import HttpResponseRedirect
 from django.urls import path, reverse
 from django.shortcuts import render,redirect
 from django.urls.resolvers import URLPattern
-from .models import PreRegisteredStudent,Department
-from .admin_classes import PreRegisteredStudentAdmin
+from .models import PreRegisteredStudent,Department,PreRegisteredStaff
+from .admin_classes import PreRegisteredStudentAdmin,PreRegisteredStaffAdmin
 
 
 
 
 admin.site.register(PreRegisteredStudent, PreRegisteredStudentAdmin)
+admin.site.register(PreRegisteredStaff, PreRegisteredStaffAdmin)
+
 
 
 app = apps.get_app_config('core')

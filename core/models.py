@@ -1,9 +1,13 @@
+import random
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils import timezone
 from .custom_manager import CustomUserManager
 from django.utils.translation import gettext_lazy as _
+from django.utils import timezone
+
+
 
 
 class TimeStampedModel(models.Model):
@@ -29,6 +33,7 @@ class User(AbstractUser):
     role = models.ForeignKey(UserRole, on_delete=models.PROTECT, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     last_login = models.DateTimeField(null=True, blank=True)
+    is_verified = models.BooleanField(default=False)
 
 
     USERNAME_FIELD = "email"
@@ -41,6 +46,18 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.username or self.email
+
+class EmailOTP(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    otp = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def is_expired(self):
+        return timezone.now() > self.created_at + timezone.timedelta(minutes=10)
+
+    @staticmethod
+    def generate_otp():
+        return str(random.randint(100000, 999999))
 
 
 class Admin(models.Model):
@@ -309,7 +326,16 @@ class PreRegisteredStaff(TimeStampedModel):
     name = models.CharField(max_length = 100, unique = True)
     department = models.ForeignKey(Department,on_delete = models.CASCADE)
     email = models.EmailField(unique=True)
+    role = models.CharField(max_length=50, blank=True) 
     is_used = models.BooleanField(default = False)
     
     def __str__(self):
-        return f"{self.name}({self.student_id})"
+        return f"{self.name}"
+    
+class Staff(TimeStampedModel):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    department = models.ForeignKey(Department, on_delete=models.CASCADE)
+    name = models.CharField(max_length=100)
+
+    def __str__(self):
+        return f"{self.name} ({self.user.email})"
