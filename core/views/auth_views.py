@@ -4,12 +4,12 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model, authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
-from core.models import UserRole, Student, Department, PreRegisteredStudent,CompanyMentor, PreRegisteredStaff, Staff
+from django.db import transaction
+from core.models import UserRole, Student, Department, PreRegisteredStudent,CompanyMentor, PreRegisteredStaff, Staff, Company,EmailOTP
 
 from django.db import connection
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from core.models import UserRole, Student, Company,EmailOTP
 from core.serializers.auth_serializers import (
     StudentRegistrationSerializer,
     CompanyRegistrationSerializer,
@@ -41,6 +41,7 @@ class StudentRegisterView(generics.CreateAPIView):
     serializer_class = StudentRegistrationSerializer
     permission_classes = [AllowAny]
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception = True)
@@ -84,9 +85,21 @@ class StudentRegisterView(generics.CreateAPIView):
         send_otp_email(user.email, otp_code)
 
         return Response({
-            'message': 'Student registered successfully. Please verify OTP sent to email.',
-            'user_id': user.id,
-        }, status=status.HTTP_201_CREATED)
+            "message": "Student registered successfully. Please verify OTP.",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "role": user.role.role_name,
+                "profile": {
+                    "bio": user.profile.bio,
+                    "avatar": user.profile.avatar.url if user.profile.avatar else None
+                },
+                "student": {
+                    "student_id": student_id,
+                    "department": department.id
+                }
+            }
+        }, status=201)
 
        
         
@@ -99,6 +112,7 @@ class CompanyRegisterView(generics.CreateAPIView):
     serializer_class = CompanyRegistrationSerializer
     permission_classes = [AllowAny]
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -119,7 +133,7 @@ class CompanyRegisterView(generics.CreateAPIView):
         user.save()
 
         # create company record
-        company = Company.objects.create(**serializer.validated_data)
+        company = Company.objects.create(**company_data)
 
         CompanyMentor.objects.create(user = user,company = company)
 
@@ -134,10 +148,17 @@ class CompanyRegisterView(generics.CreateAPIView):
         send_otp_email(user.email, otp_code)
 
         return Response({
-            'message': 'Company registered successfully. Please verify OTP sent to email.',
-            'user_id': user.id,
-            'company_id': company.id,
-        })
+            "message": "Student registered successfully. Please verify OTP.",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "role": user.role.role_name,
+                "profile": {
+                    "bio": user.profile.bio,
+                    "avatar": user.profile.avatar.url if user.profile.avatar else None
+                },
+            }
+        }, status=201)
 
 
 # -----------------------------
@@ -250,6 +271,7 @@ class StaffRegisterView(generics.CreateAPIView):
     serializer_class = StaffRegistrationSerializer
     permission_classes = [AllowAny]
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -279,12 +301,16 @@ class StaffRegisterView(generics.CreateAPIView):
         EmailOTP.objects.create(user=user, otp=otp_code)
 
         send_otp_email(user.email, otp_code)
-
-
-        send_otp_email(user.email, otp_code)
-
+        
         return Response({
-            'message': 'Staff registered successfully. Please verify OTP sent to email.',
-            'user_id': user.id,
-            'role': role_obj.role_name
-        }, status=status.HTTP_201_CREATED)
+            "message": "Student registered successfully. Please verify OTP.",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "role": user.role.role_name,
+                "profile": {
+                    "bio": user.profile.bio,
+                    "avatar": user.profile.avatar.url if user.profile.avatar else None
+                },
+            }
+        }, status=201)
