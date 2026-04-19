@@ -11,6 +11,7 @@ from core.views.company_views import CompanyApplicantsListView, CompanyApplicant
 from core.views.user_views import UserViewSet, StudentsList,UsersList
 from core.views.internship_views import *
 from core.views.auth_views import VerifyOTPView,StaffRegisterView
+from core.views.profile_views import MeView
 
 
 
@@ -32,5 +33,5 @@ urlpatterns = [
     path('internships/<int:pk>/apply/', InternshipApplicationCreateView.as_view(), name='internship-apply'),
     path('auth/verify-otp/', VerifyOTPView.as_view(), name='verify-otp'),
     path('register/staff/', StaffRegisterView.as_view(), name='staff-register'),
-
+    path('me/', MeView.as_view(), name='me'),
 ]
