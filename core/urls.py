@@ -5,6 +5,8 @@ from core.views.auth_views import (
     CompanyRegisterView,
     LoginView,
     LogoutView,
+    PasswordResetRequestView,
+    PasswordResetConfirmView,
 )
 from core.views.admin_views import CompanyApprovalView
 from core.views.company_views import CompanyApplicantsListView, CompanyApplicantActionView , VerifiedCompaniesListView 
@@ -20,6 +22,8 @@ urlpatterns = [
     path('auth/company/register/', CompanyRegisterView.as_view(), name='company-register'),
     path('auth/login/', LoginView.as_view(), name='login'),
     path('auth/logout/', LogoutView.as_view(), name='logout'),
+    path('auth/password-reset/request/', PasswordResetRequestView.as_view(), name='password-reset-request'),
+    path('auth/password-reset/confirm/', PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
     path('admin/company/<int:id>/approve/', CompanyApprovalView.as_view(), name='company-approval'),
     path('company/<int:company_id>/applicants/', CompanyApplicantsListView.as_view(), name='company-applicants'),
     path('company/<int:company_id>applicants/<int:id>/', CompanyApplicantActionView.as_view(), name='company-applicant-action'),
