@@ -14,6 +14,7 @@ from core.views.user_views import UserViewSet, StudentsList,UsersList
 from core.views.internship_views import *
 from core.views.auth_views import VerifyOTPView,StaffRegisterView
 from core.views.profile_views import MeView
+from core.views.department_views import DepartmentViewSet
 
 
 
@@ -38,4 +39,6 @@ urlpatterns = [
     path('auth/verify-otp/', VerifyOTPView.as_view(), name='verify-otp'),
     path('register/staff/', StaffRegisterView.as_view(), name='staff-register'),
     path('me/', MeView.as_view(), name='me'),
+    path('departments/', DepartmentViewSet.as_view({'get': 'list', 'post': 'create'}), name='department-list-create'),
+    path('departments/<int:pk>/', DepartmentViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='department-detail'),
 ]
