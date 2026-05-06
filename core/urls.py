@@ -10,6 +10,8 @@ from core.views.auth_views import (
     StaffRegisterView,
     StudentRegisterView,
     VerifyOTPView,
+    PasswordResetRequestView,
+    PasswordResetConfirmView,
 )
 from core.views.company_views import (
     CompanyApplicantActionView,
@@ -18,8 +20,13 @@ from core.views.company_views import (
     VerifiedCompaniesListView,
 )
 from core.views.coordinator_views import DepartmentReviewView
+
+from core.views.admin_views import CompanyApprovalView
+from core.views.company_views import CompanyApplicantsListView, CompanyApplicantActionView , VerifiedCompaniesListView 
+from core.views.user_views import UserViewSet, StudentsList,UsersList
 from core.views.internship_views import *
 from core.views.profile_views import MeView
+from core.views.department_views import DepartmentViewSet
 from core.views.student_views import AcceptOfferView
 from core.views.user_views import StudentsList, UsersList, UserViewSet
 

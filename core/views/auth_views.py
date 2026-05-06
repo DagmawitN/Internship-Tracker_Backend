@@ -27,9 +27,15 @@ from core.serializers.auth_serializers import (
     LoginSerializer,
     LogoutSerializer,
     StaffRegistrationSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetConfirmSerializer,
 )
-from core.utils import send_otp_email
+from core.utils import send_otp_email, send_password_reset_email
 from rest_framework.views import APIView
+from django.conf import settings
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.encoding import force_bytes, force_str
 
 User = get_user_model()
 
@@ -332,3 +338,54 @@ class StaffRegisterView(generics.CreateAPIView):
                 },
             }
         }, status=201)
+
+
+class PasswordResetRequestView(generics.GenericAPIView):
+    permission_classes = [AllowAny]
+    serializer_class = PasswordResetRequestSerializer
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data["email"]
+        user = User.objects.filter(email=email).first()
+
+        if user:
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+            frontend_base_url = getattr(settings, "FRONTEND_RESET_PASSWORD_URL", "http://localhost:3000/reset-password")
+            reset_link = f"{frontend_base_url}?uid={uid}&token={token}"
+            send_password_reset_email(user.email, reset_link)
+
+        return Response(
+            {"message": "If an account with that email exists, a reset link has been sent."},
+            status=status.HTTP_200_OK
+        )
+
+
+class PasswordResetConfirmView(generics.GenericAPIView):
+    permission_classes = [AllowAny]
+    serializer_class = PasswordResetConfirmSerializer
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        uid = serializer.validated_data["uid"]
+        token = serializer.validated_data["token"]
+        new_password = serializer.validated_data["new_password"]
+
+        try:
+            user_id = force_str(urlsafe_base64_decode(uid))
+            user = User.objects.get(pk=user_id)
+        except Exception:
+            return Response({"error": "Invalid reset link."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not default_token_generator.check_token(user, token):
+            return Response({"error": "Invalid or expired token."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(new_password)
+        user.save()
+
+        return Response({"message": "Password reset successful."}, status=status.HTTP_200_OK)
