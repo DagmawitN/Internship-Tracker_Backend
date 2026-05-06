@@ -5,7 +5,18 @@ from rest_framework.response import Response
 from django.contrib.auth import get_user_model, authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.db import transaction
-from core.models import UserRole, Student, Department, PreRegisteredStudent,CompanyMentor, PreRegisteredStaff, Staff, Company,EmailOTP
+from core.models import (
+    UserRole,
+    Student,
+    Department,
+    PreRegisteredStudent,
+    CompanyMentor,
+    PreRegisteredStaff,
+    Staff,
+    Company,
+    EmailOTP,
+    Profile,
+)
 
 from django.db import connection
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -72,6 +83,7 @@ class StudentRegisterView(generics.CreateAPIView):
         )
         user.set_password(user_data['password'])
         user.save()
+        Profile.objects.get_or_create(user=user)
         Student.objects.create(
             user = user,
             department = department,
@@ -91,8 +103,8 @@ class StudentRegisterView(generics.CreateAPIView):
                 "email": user.email,
                 "role": user.role.role_name,
                 "profile": {
-                    "bio": user.profile.bio,
-                    "avatar": user.profile.avatar.url if user.profile.avatar else None
+                    "bio": user.profile.bio if hasattr(user, "profile") else "",
+                    "avatar": user.profile.avatar.url if hasattr(user, "profile") and user.profile.avatar else None
                 },
                 "student": {
                     "student_id": student_id,
@@ -131,6 +143,7 @@ class CompanyRegisterView(generics.CreateAPIView):
         )
         user.set_password(user_data['password'])
         user.save()
+        Profile.objects.get_or_create(user=user)
 
         # create company record
         company = Company.objects.create(**company_data)
@@ -140,22 +153,19 @@ class CompanyRegisterView(generics.CreateAPIView):
         # Generate OTP
         otp_code = EmailOTP.generate_otp()
 
-        otp_obj = EmailOTP(user=user)
-        otp_obj.set_otp(otp_code)
-        otp_obj.save()
-
+        EmailOTP.objects.create(user=user, otp=otp_code)
         # Send email
         send_otp_email(user.email, otp_code)
 
         return Response({
-            "message": "Student registered successfully. Please verify OTP.",
+            "message": "Company registered successfully. Please verify OTP.",
             "user": {
                 "id": user.id,
                 "email": user.email,
                 "role": user.role.role_name,
                 "profile": {
-                    "bio": user.profile.bio,
-                    "avatar": user.profile.avatar.url if user.profile.avatar else None
+                    "bio": user.profile.bio if hasattr(user, "profile") else "",
+                    "avatar": user.profile.avatar.url if hasattr(user, "profile") and user.profile.avatar else None
                 },
             }
         }, status=201)
@@ -215,8 +225,15 @@ class LogoutView(generics.GenericAPIView):
 # -----------------------------
 # verify otp View
 # -----------------------------
+from rest_framework import serializers
+
+class VerifyOTPSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    otp = serializers.CharField()
+
 class VerifyOTPView(APIView):
     permission_classes = [AllowAny]
+    serializer_class = VerifyOTPSerializer
 
     def post(self, request):
         email = request.data.get("email")
@@ -287,6 +304,7 @@ class StaffRegisterView(generics.CreateAPIView):
         )
         user.set_password(serializer.validated_data['password'])
         user.save()
+        Profile.objects.get_or_create(user=user)
 
         Staff.objects.create(
             user=user,
@@ -303,14 +321,14 @@ class StaffRegisterView(generics.CreateAPIView):
         send_otp_email(user.email, otp_code)
         
         return Response({
-            "message": "Student registered successfully. Please verify OTP.",
+            "message": "Staff registered successfully. Please verify OTP.",
             "user": {
                 "id": user.id,
                 "email": user.email,
                 "role": user.role.role_name,
                 "profile": {
-                    "bio": user.profile.bio,
-                    "avatar": user.profile.avatar.url if user.profile.avatar else None
+                    "bio": user.profile.bio if hasattr(user, "profile") else "",
+                    "avatar": user.profile.avatar.url if hasattr(user, "profile") and user.profile.avatar else None
                 },
             }
         }, status=201)

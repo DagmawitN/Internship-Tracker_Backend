@@ -77,15 +77,12 @@ class UserViewSet(viewsets.GenericViewSet):
         )
 class StudentsList(generics.ListAPIView):
     serializer_class = UserSerializer
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        # Get the "STUDENT" role object
-        student_role = UserRole.objects.get(role_name="STUDENT")
-        # Filter users who have that role
-        return User.objects.filter(role=student_role)
-    
+        return User.objects.filter(role__role_name="STUDENT")
+
 class UsersList(generics.ListAPIView):
     queryset = User.objects.all()
     serializer_class = UserSerializer
-
-    
+    permission_classes = [IsAuthenticated]

@@ -1,9 +1,31 @@
+import logging
+
+from django.conf import settings
 from django.core.mail import send_mail
 
+logger = logging.getLogger(__name__)
+
+
 def send_otp_email(email, otp):
-    send_mail(
-        subject="Your OTP Code",
-        message=f"Your OTP is {otp}. It expires in 10 minutes.",
-        from_email="your_email@gmail.com",
-        recipient_list=[email],
-    )
+    if settings.DEBUG:
+        logger.warning("DEBUG OTP for %s: %s", email, otp)
+
+    if not settings.EMAIL_HOST_USER or not settings.EMAIL_HOST_PASSWORD:
+        logger.warning(
+            "Email credentials are not configured. OTP for %s is %s",
+            email,
+            otp,
+        )
+        return 0
+
+    try:
+        return send_mail(
+            subject="Your OTP Code",
+            message=f"Your OTP is {otp}. It expires in 10 minutes.",
+            from_email=settings.EMAIL_HOST_USER,
+            recipient_list=[email],
+            fail_silently=False,
+        )
+    except Exception:
+        logger.exception("Failed to send OTP email to %s. OTP is %s", email, otp)
+        return 0

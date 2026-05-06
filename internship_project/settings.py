@@ -12,11 +12,18 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import os
-from dotenv import load_dotenv
-import dj_database_url
+from datetime import timedelta
+import importlib.util
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ModuleNotFoundError:
+    # Allow running without python-dotenv; env vars can still be set by the host
+    pass
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -27,11 +34,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-+5-=+)k635&qcl*hw=r9tw#1-rky)xn2omx3l1!769gp7!=6^%'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'False') == 'True'
+DEBUG = os.getenv("DEBUG", "False") == "True"
 
-from corsheaders.defaults import default_headers
 
-CORS_ALLOW_HEADERS = list(default_headers) + ['authorization',]
+def _has_module(name: str) -> bool:
+    return importlib.util.find_spec(name) is not None
+
+
+if _has_module("corsheaders"):
+    try:
+        from corsheaders.defaults import default_headers  # type: ignore
+
+        CORS_ALLOW_HEADERS = list(default_headers) + ["authorization"]
+    except Exception:
+        CORS_ALLOW_HEADERS = ["authorization"]
 
 ALLOWED_HOSTS = ['*']
 
@@ -49,26 +65,35 @@ INSTALLED_APPS = [
     'rest_framework',
     'core.apps.CoreConfig',
     'rest_framework_simplejwt',
-    'django_filters',
-    'drf_spectacular',              
     'rest_framework_simplejwt.token_blacklist',
-    'corsheaders',
-    'cloudinary', 
-    'cloudinary_storage'
 ]
+
+if _has_module("django_filters"):
+    INSTALLED_APPS.append("django_filters")
+if _has_module("drf_spectacular"):
+    INSTALLED_APPS.append("drf_spectacular")
+if _has_module("corsheaders"):
+    INSTALLED_APPS.append("corsheaders")
+if _has_module("cloudinary"):
+    INSTALLED_APPS.append("cloudinary")
+if _has_module("cloudinary_storage"):
+    INSTALLED_APPS.append("cloudinary_storage")
 
 CORS_ALLOW_ALL_ORIGINS = True
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+if _has_module("corsheaders"):
+    # Put it right after SessionMiddleware
+    MIDDLEWARE.insert(2, "corsheaders.middleware.CorsMiddleware")
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -101,9 +126,26 @@ WSGI_APPLICATION = 'internship_project.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-'default': dj_database_url.parse(os.getenv('DATABASE_URL'), conn_max_age=600)
-}
+DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL:
+    try:
+        import dj_database_url  # type: ignore
+
+        DATABASES = {
+            "default": dj_database_url.parse(DATABASE_URL, conn_max_age=600),
+        }
+    except ModuleNotFoundError:
+        raise ModuleNotFoundError(
+            "dj-database-url is required when DATABASE_URL is set. "
+            "Either install it or unset DATABASE_URL to use sqlite3."
+        )
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 
 # Password validation
@@ -164,8 +206,8 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'dtaye144@gmail.com'
-EMAIL_HOST_PASSWORD = 'dvex fbaw ocoq vkpa'
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 
@@ -174,4 +216,8 @@ CLOUDINARY_STORAGE = {
     'API_KEY': os.getenv('CLOUDINARY_API_KEY'),
     'API_SECRET': os.getenv('CLOUDINARY_API_SECRET'),
 }
-os.getenv('DEBUG', 'False') == 'True'
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(hours=6), 
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+}
