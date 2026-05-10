@@ -1,85 +1,91 @@
-from django.utils import timezone
-from rest_framework import serializers,generics
-from core.models import InternshipPosition,InternshipApplication,Skill
+from rest_framework import serializers
+
+from core.models import Internship, InternshipApplication, InternshipPosition, Skill
+
 
 class InternshipApplicationSerializer(serializers.ModelSerializer):
     class Meta:
         model = InternshipApplication
         fields = [
-            'id',
-            'position',
-            'start_date',
-            'end_date',
-            'notes',
-            'status',
-            'created_at'
+            "id",
+            "position",
+            "dept_status",
+            "mentor_status",
+            "student_decision",
+            "created_at",
         ]
         read_only_fields = [
-            'id',
-            'status',  
-            'created_at'  
+            "id",
+            "dept_status",
+            "mentor_status",
+            "student_decision",
+            "position",
+            "created_at",
         ]
 
     def validate(self, attrs):
-        start_date = attrs.get('start_date')
-        end_date = attrs.get('end_date')
-        student = self.context['request'].user
-        position_id = self.context.get('position_id')
-        
+        request = self.context["request"]
+        user = request.user
+
         try:
-            position = InternshipPosition.objects.get(id=position_id)
-        except InternshipPosition.DoesNotExist:
-            raise serializers.ValidationError("Internship position does not exist.")
-        attrs['position'] = position
+            student = user.student_profile
+        except:
+            raise serializers.ValidationError("User is not a student.")
 
-        company = position.company
+        attrs["student"] = student
 
-        if not company.is_active:
-            raise serializers.ValidationError(
-            "This company is not verified and cannot accept applications."
-        )
-
-        if end_date <= start_date:
-            raise serializers.ValidationError("End date must be after start date")
-
-        if timezone.now().date() >= start_date:
-            raise serializers.ValidationError("Start date must be in the future")
-
-        existing = InternshipApplication.objects.filter(
-            student=student,
-            company=company,
-            status__in=['PENDING', 'APPROVED', 'ONGOING']
-        ).exists()
-        if existing:
-            raise serializers.ValidationError("You already have an active application for this company.")
+        # Duplicate application prevention is handled in the view using (student, position),
+        # because `position` is read-only here and provided via the URL.
 
         return attrs
 
     def create(self, validated_data):
-        position = validated_data["position"]
-        internship = InternshipApplication.objects.create(
-            student=self.context['request'].user,
-            company=position.company,
-            status='PENDING',
-            application_date=timezone.now(),
-            **validated_data
-        )
-        return internship
-    
+        return InternshipApplication.objects.create(**validated_data)
+
 
 class SkillSerializer(serializers.ModelSerializer):
     class Meta:
         model = Skill
-        fields = ['id', 'name']    
+        fields = ["id", "name"]
+
 
 class InternshipPositionSerializer(serializers.ModelSerializer):
     required_skills = serializers.PrimaryKeyRelatedField(
-        queryset=Skill.objects.all(),
-        many=True,
-        required=False
+        queryset=Skill.objects.all(), many=True, required=False
     )
+    accepted_applications = serializers.IntegerField(read_only=True)
+    available_slots = serializers.SerializerMethodField()
 
     class Meta:
         model = InternshipPosition
         fields = "__all__"
         read_only_fields = ("company", "created_at", "updated_at")
+
+    def get_available_slots(self, obj):
+        if obj.max_applicants is None:
+            return None
+        accepted = getattr(obj, "accepted_applications", 0)
+        return max(obj.max_applicants - accepted, 0)
+
+
+class InternshipSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Internship
+        fields = "__all__"
+        read_only_fields = (
+            "student",
+            "position",
+            "company",
+            "supervisor",
+            "mentor",
+            "status",
+            "end_date",
+            "total_hours",
+        )
+
+
+class InternshipNotesSerializer(serializers.Serializer):
+    notes = serializers.CharField(allow_blank=True)
+    mode = serializers.ChoiceField(
+        choices=["append", "overwrite"], required=False, default="append"
+    )

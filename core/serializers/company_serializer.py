@@ -16,10 +16,10 @@ class CompanySerializer(serializers.ModelSerializer):
             'created_at',
         ]
         read_only_fields = fields
-        
+
 class CompanyApplicationSerializer(serializers.ModelSerializer):
     position_title = serializers.CharField(source = 'position.title', read_only = True)
-    student_email = serializers.EmailField(source = 'student.email', read_only = True)
+    student_email = serializers.EmailField(source='student.user.email', read_only=True)
 
     class Meta:
         model = InternshipApplication
@@ -27,11 +27,8 @@ class CompanyApplicationSerializer(serializers.ModelSerializer):
             'id',
             'position_title',
             'student_email',
-            'start_date',
-            'end_date',
-            'notes',
-            'status',
+            'dept_status',
+            'mentor_status',
+            'student_decision',
             'created_at'
         ]
-
-        
