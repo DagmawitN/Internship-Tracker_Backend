@@ -5,9 +5,22 @@ from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import cloudinary.uploader
 
+from core.models import Profile
+from rest_framework import serializers
+
+class MeUpdateSerializer(serializers.Serializer):
+    first_name = serializers.CharField(required=False)
+    last_name = serializers.CharField(required=False)
+    phone = serializers.CharField(required=False)
+    bio = serializers.CharField(required=False)
+    location = serializers.CharField(required=False)
+    department = serializers.IntegerField(required=False)
+    avatar = serializers.ImageField(required=False)
+
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
+    serializer_class = MeUpdateSerializer
 
     def get(self, request):
         return Response(self._build_response(request.user))
@@ -15,22 +28,23 @@ class MeView(APIView):
     def patch(self, request):
         user = request.user
 
-        # USER UPDATE 
+        # USER UPDATE
         user.first_name = request.data.get("first_name", user.first_name)
         user.last_name = request.data.get("last_name", user.last_name)
         user.phone = request.data.get("phone", user.phone)
         user.save()
 
         # PROFILE UPDATE
-        profile = user.profile
+        profile, _ = Profile.objects.get_or_create(user=user)
         profile.bio = request.data.get("bio", profile.bio)
         profile.location = request.data.get("location", profile.location)
 
-        # AVATAR UPDATE 
+        # AVATAR UPDATE
         if "avatar" in request.FILES:
             # delete old avatar to save space
-            if profile.avatar and profile.avatar.public_id:
-                cloudinary.uploader.destroy(profile.avatar.public_id)
+            public_id = getattr(profile.avatar, "public_id", None)
+            if public_id:
+                cloudinary.uploader.destroy(public_id)
 
             profile.avatar = request.FILES["avatar"]
 
@@ -42,7 +56,7 @@ class MeView(APIView):
             department = request.data.get("department")
 
             if department:
-                student.department_id = department  
+                student.department_id = department
                 student.save()
 
         return Response(
@@ -56,10 +70,12 @@ class MeView(APIView):
     def _build_response(self, user):
         """Reusable response builder"""
 
-       
+
+        profile, _ = Profile.objects.get_or_create(user=user)
+
         avatar_url = None
-        if user.profile.avatar:
-            avatar_url = user.profile.avatar.build_url(
+        if profile.avatar:
+            avatar_url = profile.avatar.build_url(
                 width=300,
                 height=300,
                 crop="fill",
@@ -74,9 +90,9 @@ class MeView(APIView):
             "last_name": user.last_name,
             "phone": user.phone,
             "profile": {
-                "bio": user.profile.bio,
+                "bio": profile.bio,
                 "avatar": avatar_url,
-                "location": user.profile.location
+                "location": profile.location
             }
         }
 
@@ -86,9 +102,9 @@ class MeView(APIView):
                 "department": user.student_profile.department.department_name
             }
 
-        if hasattr(user, "staff_profile"):
+        if hasattr(user, "staff"):
             data["staff"] = {
-                "department": user.staff_profile.department.department_name
+                "department": user.staff.department.department_name
             }
 
         return data
