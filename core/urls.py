@@ -14,6 +14,7 @@ from core.views.user_views import UserViewSet, StudentsList,UsersList
 from core.views.internship_views import *
 from core.views.auth_views import VerifyOTPView,StaffRegisterView
 from core.views.profile_views import MeView
+from core.views.report_views import CreateWeeklyLogbookAPIView, AddDailyLogEntryAPIView, SubmitFinalReportAPIView
 
 
 
@@ -38,4 +39,7 @@ urlpatterns = [
     path('auth/verify-otp/', VerifyOTPView.as_view(), name='verify-otp'),
     path('register/staff/', StaffRegisterView.as_view(), name='staff-register'),
     path('me/', MeView.as_view(), name='me'),
+    path('logbooks/', CreateWeeklyLogbookAPIView.as_view()),
+    path('logbooks/<int:logbook_id>/entries/', AddDailyLogEntryAPIView.as_view()),
+    path("reports/final/<int:student_id>/", SubmitFinalReportAPIView.as_view(), name="submit-final-report"),
 ]

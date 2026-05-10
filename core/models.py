@@ -239,7 +239,7 @@ class ReportFile(TimeStampedModel):
 
     report = models.ForeignKey(Report, on_delete=models.CASCADE, related_name="files")
     file_name = models.CharField(max_length=200)
-    file_path = models.CharField(max_length=255)  # or use FileField
+    file = models.FileField(upload_to="final_reports/")
     file_size = models.BigIntegerField(null=True, blank=True)
     mime_type = models.CharField(max_length=100, blank=True)
     uploaded_at = models.DateTimeField(default=timezone.now)
@@ -351,3 +351,73 @@ class Profile(TimeStampedModel):
 
     def __str__(self):
         return f"Profile - {self.user}"
+
+class WeeklyLogbook(TimeStampedModel):
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        SUBMITTED = "SUBMITTED", "Submitted"
+        VERIFIED = "VERIFIED", "Verified"
+        REVIEWED = "REVIEWED", "Reviewed"
+
+    internship = models.ForeignKey(
+        InternshipApplication,
+        on_delete=models.CASCADE,
+        related_name="weekly_logbooks"
+    )
+
+    week_number = models.PositiveIntegerField()
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT
+    )
+
+    student_comment = models.TextField(blank=True)
+
+    company_comment = models.TextField(blank=True)
+
+    advisor_comment = models.TextField(blank=True)
+
+    verified_by = models.ForeignKey(
+        CompanyMentor,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+
+    reviewed_by = models.ForeignKey(
+        Supervisor,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+
+    submitted_at = models.DateTimeField(null=True, blank=True)
+
+    verified_at = models.DateTimeField(null=True, blank=True)
+
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["internship", "week_number"],
+                name="unique_weekly_logbook"
+            )
+        ]
+
+class DailyLogEntry(TimeStampedModel):
+
+    weekly_logbook = models.ForeignKey(
+        WeeklyLogbook,
+        on_delete=models.CASCADE,
+        related_name="daily_entries"
+    )
+
+    day_number = models.PositiveIntegerField()
+
+    work_date = models.DateField()
+
+    work_performed = models.TextField()
