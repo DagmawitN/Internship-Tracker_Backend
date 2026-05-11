@@ -351,7 +351,12 @@ class StaffRegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         pre_reg = serializer.validated_data["pre_reg"]
 
-        role_name = "COORDINATOR" if pre_reg.role == "COORDINATOR" else "STAFF"
+        if pre_reg.role == "COORDINATOR":
+            role_name = "COORDINATOR"
+        elif pre_reg.role == "ADVISOR":
+            role_name = "ADVISOR"
+        else:
+            role_name = "STAFF"
         role_obj, _ = UserRole.objects.get_or_create(role_name=role_name)
 
         user = User.objects.create(

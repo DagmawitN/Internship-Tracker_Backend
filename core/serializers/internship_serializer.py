@@ -64,8 +64,25 @@ class InternshipPositionSerializer(serializers.ModelSerializer):
     def get_available_slots(self, obj):
         if obj.max_applicants is None:
             return None
-        accepted = getattr(obj, "accepted_applications", 0)
+        accepted = getattr(obj, "accepted_applications", 0) or 0
         return max(obj.max_applicants - accepted, 0)
+
+    def validate_working_days(self, value):
+        valid = {
+            "MONDAY",
+            "TUESDAY",
+            "WEDNESDAY",
+            "THURSDAY",
+            "FRIDAY",
+            "SATURDAY",
+            "SUNDAY",
+        }
+        for day in value:
+            if day.upper() not in valid:
+                raise serializers.ValidationError(
+                    f"'{day}' is not a valid weekday name."
+                )
+        return [d.upper() for d in value]
 
 
 class InternshipSerializer(serializers.ModelSerializer):

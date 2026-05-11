@@ -26,6 +26,12 @@ class AcceptOfferView(APIView):
         if application.mentor_status != "ACCEPTED":
             raise ValidationError("No offer to accept")
 
+        if application.advisor_status != "APPROVED":
+            raise ValidationError(
+                "Your advisor has not approved this application yet. "
+                "Please wait for advisor review."
+            )
+
         if application.student_decision == "ACCEPTED":
             raise ValidationError("Already accepted")
 

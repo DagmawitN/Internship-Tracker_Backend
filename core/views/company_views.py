@@ -1,39 +1,50 @@
-from django.shortcuts import get_object_or_404
-from rest_framework import generics, permissions,status
-from rest_framework.response import Response
-from core.models import InternshipApplication, Company, CompanyMentor
 from django.contrib.auth import get_user_model
-from core.serializers.company_serializer import CompanySerializer,CompanyApplicationSerializer
+from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
-from rest_framework.views import APIView
-from core.permissions import IsCompanyMentor,IsMentorOfCompany
-from rest_framework import generics
-from rest_framework.permissions import IsAuthenticated
+from rest_framework import generics, permissions, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.filters import OrderingFilter, SearchFilter
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
+from core.models import Company, CompanyMentor, InternshipApplication
+from core.permissions import IsCompanyMentor, IsMentorOfCompany
+from core.serializers.company_serializer import (
+    CompanyApplicationSerializer,
+    CompanySerializer,
+)
 
 User = get_user_model()
 
 from rest_framework import serializers
 
+
 class ActionSerializer(serializers.Serializer):
-    action = serializers.ChoiceField(choices=[("accept", "Accept"), ("reject", "Reject")])
+    action = serializers.ChoiceField(
+        choices=[("accept", "Accept"), ("reject", "Reject")]
+    )
+
 
 class CompanyApplicantsListView(generics.ListAPIView):
     serializer_class = CompanyApplicationSerializer
-    permission_classes = [permissions.IsAuthenticated, IsCompanyMentor, IsMentorOfCompany]
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsCompanyMentor,
+        IsMentorOfCompany,
+    ]
 
     def get_queryset(self):
-        company_id = self.kwargs['company_id']
+        company_id = self.kwargs["company_id"]
         mentor = CompanyMentor.objects.filter(
-            user=self.request.user,
-            company_id=company_id
+            user=self.request.user, company_id=company_id
         ).first()
         if not mentor:
             raise PermissionDenied("You can only view applicants for your company.")
 
-        queryset = InternshipApplication.objects.filter(position__company_id=mentor.company_id)
+        queryset = InternshipApplication.objects.filter(
+            position__company_id=mentor.company_id
+        )
 
         dept_status = self.request.query_params.get("dept_status")
         mentor_status = self.request.query_params.get("mentor_status")
@@ -49,8 +60,11 @@ class CompanyApplicantsListView(generics.ListAPIView):
         if mentor_status:
             queryset = queryset.filter(mentor_status=mentor_status.strip().upper())
         if student_decision:
-            queryset = queryset.filter(student_decision=student_decision.strip().upper())
+            queryset = queryset.filter(
+                student_decision=student_decision.strip().upper()
+            )
         return queryset
+
 
 class CompanyApplicantActionView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -70,8 +84,8 @@ class CompanyApplicantActionView(APIView):
         if application.dept_status != "APPROVED":
             raise ValidationError("Application not approved by department.")
 
-        action = request.data.get('action', '').lower()
-        if action not in ['accept', 'reject']:
+        action = request.data.get("action", "").lower()
+        if action not in ["accept", "reject"]:
             raise ValidationError('Action must be "accept" or "reject".')
 
         if application.mentor_status not in [None, "PENDING"]:
@@ -85,11 +99,15 @@ class CompanyApplicantActionView(APIView):
 
         application.save()
 
-        return Response({
-            'message': "Mentor decision recorded",
-            'application_id': application.id,
-            'mentor_status': application.mentor_status,
-        }, status=status.HTTP_200_OK)
+        return Response(
+            {
+                "message": "Mentor decision recorded",
+                "application_id": application.id,
+                "mentor_status": application.mentor_status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class VerifiedCompaniesListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -97,9 +115,10 @@ class VerifiedCompaniesListView(generics.ListAPIView):
     serializer_class = CompanySerializer
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    search_fields = ['company_name','industry_type']
-    ordering_fields = ['created_at','company_name','industry_type']
-    ordering = ['company_name']
+    search_fields = ["company_name", "industry_type"]
+    ordering_fields = ["created_at", "company_name", "industry_type"]
+    ordering = ["company_name"]
+
 
 class MentorReviewView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMentor]
@@ -115,9 +134,6 @@ class MentorReviewView(APIView):
         # Ensure mentor belongs to the company
         if application.position.company != mentor.company:
             raise PermissionDenied("Not your company")
-
-        if application.dept_status != "APPROVED":
-            raise ValidationError("Application not approved by department")
 
         if application.mentor_status not in [None, "PENDING"]:
             raise ValidationError("Already reviewed by mentor")
