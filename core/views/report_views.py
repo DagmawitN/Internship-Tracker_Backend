@@ -1,10 +1,11 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework import status
+from rest_framework import status, generics, serializers
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.db import models
+from django.utils import timezone
 from core.models import (
     WeeklyLogbook,
     InternshipApplication,
@@ -12,12 +13,17 @@ from core.models import (
     Report,
     ReportFile,
     Student,
-    AdvisorAssignment
+    AdvisorAssignment,
+    FinalIndustryEvaluation,
+    CompanyMentor
 )
 from core.serializers.report_serializers import (
     WeeklyLogbookSerializer,
     DailyLogEntrySerializer,
-    SubmitFinalReportSerializer
+    SubmitFinalReportSerializer,
+    AdvisorFinalReportListSerializer,
+    AdvisorWeeklyLogbookSerializer,
+    FinalIndustryEvaluationSerializer
 )
 
 class AddDailyLogEntryAPIView(APIView):
@@ -189,7 +195,7 @@ class SubmitFinalReportAPIView(APIView):
                 internship=internship,
                 report_type='FINAL',
                 status='SUBMITTED',
-                submission_date=timezone.now()
+                submission_date=timezone.now
             )
             return Response({
                 "message": "Final report submitted successfully",
@@ -254,4 +260,213 @@ class SubmitFinalReportAPIView(APIView):
             filename=report_file.file_name
         )
         return response
+
+
+class AdvisorFinalReportListAPIView(APIView):
+    """
+    API endpoint for advisors to view FINAL internship reports
+    submitted by students assigned to them.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Check if user has Advisor role
+        if not hasattr(request.user, 'role') or request.user.role.role_name != 'Advisor':
+            return Response(
+                {"error": "Only advisors can access this endpoint."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Get internships assigned to this advisor
+        assigned_internships = AdvisorAssignment.objects.filter(
+            advisor=request.user
+        ).values_list('internship', flat=True)
+
+        # Get FINAL reports for those internships
+        reports = Report.objects.filter(
+            report_type='FINAL',
+            internship__in=assigned_internships
+        ).select_related(
+            'internship__student__user',
+            'internship__position__company'
+        ).prefetch_related(
+            'files'
+        ).order_by('-submission_date')
+
+        serializer = AdvisorFinalReportListSerializer(reports, many=True)
+        return Response(serializer.data)
+
+
+class AdvisorWeeklyLogbookListAPIView(APIView):
+    """
+    API endpoint for advisors to view weekly logbooks submitted by students
+    assigned to them.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Check if user has Advisor role
+        if not hasattr(request.user, 'role') or request.user.role.role_name != 'Advisor':
+            return Response(
+                {"error": "Only advisors can access this endpoint."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Get internships assigned to this advisor
+        assigned_internships = AdvisorAssignment.objects.filter(
+            advisor=request.user
+        ).values_list('internship', flat=True)
+
+        # Get weekly logbooks for those internships, ordered by newest week first
+        logbooks = WeeklyLogbook.objects.filter(
+            internship__in=assigned_internships
+        ).select_related(
+            'internship__student__user',
+            'internship__position__company'
+        ).prefetch_related(
+            'daily_entries'
+        ).order_by('-week_number')
+
+        serializer = AdvisorWeeklyLogbookSerializer(logbooks, many=True)
+        return Response(serializer.data)
+
+
+class FinalIndustryEvaluationListCreateAPIView(generics.ListCreateAPIView):
+    """
+    API endpoint for company supervisors to submit and view final industry evaluations.
+    POST: Create a new final industry evaluation
+    GET: List all final industry evaluations
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = FinalIndustryEvaluationSerializer
+    
+    def get_queryset(self):
+        """
+        Filter evaluations based on user role:
+        - Company mentors see their own evaluations
+        - Advisors see all evaluations for their assigned students
+        """
+        user = self.request.user
+        
+        # Check if user is a company mentor
+        try:
+            company_mentor = CompanyMentor.objects.get(user=user)
+            return FinalIndustryEvaluation.objects.filter(
+                company_mentor=company_mentor
+            ).select_related(
+                'internship__student__user',
+                'internship__position__company',
+                'company_mentor__user'
+            )
+        except CompanyMentor.DoesNotExist:
+            pass
+        
+        # Check if user is an advisor
+        if hasattr(user, 'role') and user.role.role_name == 'Advisor':
+            assigned_internships = AdvisorAssignment.objects.filter(
+                advisor=user
+            ).values_list('internship', flat=True)
+            
+            return FinalIndustryEvaluation.objects.filter(
+                internship__in=assigned_internships
+            ).select_related(
+                'internship__student__user',
+                'internship__position__company',
+                'company_mentor__user'
+            )
+        
+        # Default: no access
+        return FinalIndustryEvaluation.objects.none()
+    
+    def perform_create(self, serializer):
+        """
+        Ensure only company mentors can create evaluations and validate permissions.
+        """
+        # Get company mentor
+        try:
+            company_mentor = CompanyMentor.objects.get(user=self.request.user)
+        except CompanyMentor.DoesNotExist:
+            raise serializers.ValidationError(
+                "Only company supervisors/mentors can submit evaluations."
+            )
+        
+        # Get internship
+        internship = serializer.validated_data.get('internship')
+        
+        # Verify mentor is assigned to this internship
+        if internship.mentor != company_mentor:
+            raise serializers.ValidationError(
+                "You can only evaluate internships assigned to you."
+            )
+        
+        # Check if evaluation already exists
+        if FinalIndustryEvaluation.objects.filter(internship=internship).exists():
+            raise serializers.ValidationError(
+                "Final evaluation for this internship already exists."
+            )
+        
+        # Save with company mentor
+        serializer.save(company_mentor=company_mentor)
+
+
+class FinalIndustryEvaluationDetailAPIView(generics.RetrieveUpdateAPIView):
+    """
+    API endpoint to retrieve or update a specific final industry evaluation.
+    GET: Retrieve evaluation details
+    PUT/PATCH: Update evaluation
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = FinalIndustryEvaluationSerializer
+    lookup_field = 'id'
+    
+    def get_queryset(self):
+        """Filter evaluations for authorized users."""
+        user = self.request.user
+        
+        # Check if user is a company mentor
+        try:
+            company_mentor = CompanyMentor.objects.get(user=user)
+            return FinalIndustryEvaluation.objects.filter(
+                company_mentor=company_mentor
+            ).select_related(
+                'internship__student__user',
+                'internship__position__company',
+                'company_mentor__user'
+            )
+        except CompanyMentor.DoesNotExist:
+            pass
+        
+        # Check if user is an advisor
+        if hasattr(user, 'role') and user.role.role_name == 'Advisor':
+            assigned_internships = AdvisorAssignment.objects.filter(
+                advisor=user
+            ).values_list('internship', flat=True)
+            
+            return FinalIndustryEvaluation.objects.filter(
+                internship__in=assigned_internships
+            ).select_related(
+                'internship__student__user',
+                'internship__position__company',
+                'company_mentor__user'
+            )
+        
+        return FinalIndustryEvaluation.objects.none()
+    
+    def perform_update(self, serializer):
+        """Only company mentors can update their own evaluations."""
+        evaluation = self.get_object()
+        
+        # Verify user is the company mentor who submitted this
+        try:
+            company_mentor = CompanyMentor.objects.get(user=self.request.user)
+            if evaluation.company_mentor != company_mentor:
+                raise serializers.ValidationError(
+                    "You can only update your own evaluations."
+                )
+        except CompanyMentor.DoesNotExist:
+            raise serializers.ValidationError(
+                "Only company supervisors/mentors can update evaluations."
+            )
+        
+        serializer.save()
 

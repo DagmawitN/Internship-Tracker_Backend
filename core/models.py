@@ -563,3 +563,99 @@ class DailyLogEntry(TimeStampedModel):
     work_date = models.DateField()
 
     work_performed = models.TextField()
+
+
+class FinalIndustryEvaluation(TimeStampedModel):
+    """
+    Model for Final Industry Evaluation Form submitted by company supervisors
+    at the end of internship. Scores range from 1-5.
+    """
+    
+    # Basic Information
+    internship = models.OneToOneField(
+        InternshipApplication,
+        on_delete=models.CASCADE,
+        related_name="final_industry_evaluation"
+    )
+    company_mentor = models.ForeignKey(
+        CompanyMentor,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="final_evaluations"
+    )
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    
+    # SECTION A — JOB PERFORMANCE (1-5 scale)
+    knowledge_about_task = models.PositiveIntegerField(default=0)
+    problem_solving = models.PositiveIntegerField(default=0)
+    quality_of_work = models.PositiveIntegerField(default=0)
+    punctuality_in_production = models.PositiveIntegerField(default=0)
+    initiative = models.PositiveIntegerField(default=0)
+    
+    # SECTION B — SOFT SKILLS (1-5 scale)
+    dedication = models.PositiveIntegerField(default=0)
+    cooperation = models.PositiveIntegerField(default=0)
+    discipline = models.PositiveIntegerField(default=0)
+    responsibility = models.PositiveIntegerField(default=0)
+    socialization = models.PositiveIntegerField(default=0)
+    communication = models.PositiveIntegerField(default=0)
+    decision_making = models.PositiveIntegerField(default=0)
+    
+    # SECTION C — COMMENTS
+    student_potential = models.TextField(blank=True)
+    overall_comments = models.TextField(blank=True)
+    would_offer_job = models.BooleanField(default=False)
+    
+    # CALCULATED FIELDS
+    section_a_total = models.PositiveIntegerField(default=0)
+    section_b_total = models.PositiveIntegerField(default=0)
+    total_mark = models.PositiveIntegerField(default=0)
+    overall_student_performance = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0
+    )
+    
+    class Meta:
+        verbose_name = "Final Industry Evaluation"
+        verbose_name_plural = "Final Industry Evaluations"
+        unique_together = ("internship",)
+    
+    def calculate_totals(self):
+        """Calculate section totals and overall performance."""
+        # Section A total (5 fields)
+        self.section_a_total = (
+            self.knowledge_about_task +
+            self.problem_solving +
+            self.quality_of_work +
+            self.punctuality_in_production +
+            self.initiative
+        )
+        
+        # Section B total (7 fields)
+        self.section_b_total = (
+            self.dedication +
+            self.cooperation +
+            self.discipline +
+            self.responsibility +
+            self.socialization +
+            self.communication +
+            self.decision_making
+        )
+        
+        # Total mark (Section A + Section B)
+        self.total_mark = self.section_a_total + self.section_b_total
+        
+        # Overall student performance = (total_mark / 60) * 20
+        # Max score is 60 (5*5 + 7*5), converted to 20 points scale
+        if self.total_mark > 0:
+            self.overall_student_performance = (self.total_mark / 60) * 20
+        else:
+            self.overall_student_performance = 0
+    
+    def save(self, *args, **kwargs):
+        """Auto-calculate totals before saving."""
+        self.calculate_totals()
+        super().save(*args, **kwargs)
+    
+    def __str__(self):
+        return f"Final Industry Evaluation - {self.internship.student} ({self.internship.position.company.company_name})"

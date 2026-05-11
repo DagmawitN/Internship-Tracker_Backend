@@ -25,7 +25,8 @@ from core.views.internship_views import *
 from core.views.profile_views import MeView
 from core.views.student_views import AcceptOfferView
 from core.views.user_views import StudentsList, UsersList, UserViewSet
-from core.views.report_views import CreateWeeklyLogbookAPIView, AddDailyLogEntryAPIView, SubmitFinalReportAPIView
+from core.views.report_views import CreateWeeklyLogbookAPIView, AddDailyLogEntryAPIView, SubmitFinalReportAPIView, AdvisorFinalReportListAPIView, AdvisorWeeklyLogbookListAPIView
+from core.views.evaluation_views import FinalIndustryEvaluationListCreateAPIView, FinalIndustryEvaluationDetailAPIView
 
 
 
@@ -168,4 +169,8 @@ urlpatterns = [
     path('logbooks/', CreateWeeklyLogbookAPIView.as_view()),
     path('logbooks/<int:logbook_id>/entries/', AddDailyLogEntryAPIView.as_view()),
     path("reports/final/<int:student_id>/", SubmitFinalReportAPIView.as_view(), name="submit-final-report"),
+    path("advisor/reports/final/", AdvisorFinalReportListAPIView.as_view(), name="advisor-final-reports"),
+    path("advisor/logbooks/", AdvisorWeeklyLogbookListAPIView.as_view(), name="advisor-weekly-logbooks"),
+    path("evaluations/final-industry/", FinalIndustryEvaluationListCreateAPIView.as_view(), name="final-industry-evaluations-list"),
+    path("evaluations/final-industry/<int:id>/", FinalIndustryEvaluationDetailAPIView.as_view(), name="final-industry-evaluation-detail"),
 ]
