@@ -122,6 +122,24 @@ class Supervisor(TimeStampedModel):
         return f"Supervisor: {self.user}"
 
 
+class Advisor(TimeStampedModel):
+    """Departmental academic advisor who supervises assigned students' internships."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="advisor_profile",
+    )
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.CASCADE,
+        related_name="advisors",
+    )
+
+    def __str__(self):
+        return f"Advisor: {self.user}"
+
+
 class Student(TimeStampedModel):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -131,6 +149,13 @@ class Student(TimeStampedModel):
     student_id = models.CharField(max_length=20)
     department = models.ForeignKey(
         Department, on_delete=models.PROTECT, related_name="students"
+    )
+    advisor = models.ForeignKey(
+        "Advisor",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_students",
     )
 
     def __str__(self):
@@ -164,6 +189,21 @@ class InternshipPosition(TimeStampedModel):
     is_active = models.BooleanField(default=True, db_index=True)
     max_applicants = models.PositiveIntegerField(null=True, blank=True)
 
+    # Schedule
+    working_days = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='List of weekday names, e.g. ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY"]',
+    )
+    daily_start_time = models.TimeField(null=True, blank=True)
+    daily_end_time = models.TimeField(null=True, blank=True)
+
+    # Location
+    is_remote = models.BooleanField(default=False)
+    work_latitude = models.FloatField(null=True, blank=True)
+    work_longitude = models.FloatField(null=True, blank=True)
+    allowed_radius_meters = models.PositiveIntegerField(default=200)
+
     class Meta:
         ordering = ["-created_at"]
         indexes = [
@@ -190,6 +230,11 @@ class InternshipApplication(TimeStampedModel):
         PENDING = "PENDING"
         ACCEPTED = "ACCEPTED"
         DECLINED = "DECLINED"
+
+    class AdvisorStatus(models.TextChoices):
+        PENDING = "PENDING"
+        APPROVED = "APPROVED"
+        REJECTED = "REJECTED"
 
     student = models.ForeignKey(
         Student, on_delete=models.CASCADE, related_name="applications"
@@ -222,6 +267,21 @@ class InternshipApplication(TimeStampedModel):
     student_decision = models.CharField(
         max_length=20, choices=StudentDecision.choices, default=StudentDecision.PENDING
     )
+
+    # Advisor review (new workflow)
+    advisor = models.ForeignKey(
+        "Advisor",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reviewed_applications",
+    )
+    advisor_status = models.CharField(
+        max_length=20,
+        choices=AdvisorStatus.choices,
+        default=AdvisorStatus.PENDING,
+    )
+    advisor_notes = models.TextField(blank=True)
 
     class Meta:
         unique_together = ("student", "position")
@@ -265,17 +325,33 @@ class Internship(models.Model):
 
 
 class Attendance(TimeStampedModel):
+    class Status(models.TextChoices):
+        PRESENT = "PRESENT", "Present"
+        LATE = "LATE", "Late"
+        ABSENT = "ABSENT", "Absent"
+
     internship = models.ForeignKey(
-        InternshipApplication, on_delete=models.CASCADE, related_name="attendances"
+        Internship, on_delete=models.CASCADE, related_name="attendances"
     )
     date = models.DateField()
     check_in_time = models.TimeField(null=True, blank=True)
     check_out_time = models.TimeField(null=True, blank=True)
-    hours_worked = models.DecimalField(
+    total_hours = models.DecimalField(
         max_digits=6, decimal_places=2, null=True, blank=True
     )
-    status = models.CharField(max_length=30, blank=True)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PRESENT
+    )
     notes = models.TextField(blank=True)
+
+    # GPS (captured at check-in)
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    accuracy = models.FloatField(null=True, blank=True)
+    is_location_verified = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = ("internship", "date")
 
     def __str__(self):
         return f"Attendance {self.id} - {self.internship} - {self.date}"
@@ -329,7 +405,7 @@ class Report(TimeStampedModel):
 class ReportFile(TimeStampedModel):
     report = models.ForeignKey(Report, on_delete=models.CASCADE, related_name="files")
     file_name = models.CharField(max_length=200)
-    file = models.FileField(upload_to="final_reports/")
+    file = models.FileField(upload_to="final_reports/", null=True, blank=True)
     file_size = models.BigIntegerField(null=True, blank=True)
     mime_type = models.CharField(max_length=100, blank=True)
     uploaded_at = models.DateTimeField(default=timezone.now)
@@ -494,8 +570,8 @@ class Profile(TimeStampedModel):
     def __str__(self):
         return f"Profile - {self.user}"
 
-class WeeklyLogbook(TimeStampedModel):
 
+class WeeklyLogbook(TimeStampedModel):
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
         SUBMITTED = "SUBMITTED", "Submitted"
@@ -503,17 +579,13 @@ class WeeklyLogbook(TimeStampedModel):
         REVIEWED = "REVIEWED", "Reviewed"
 
     internship = models.ForeignKey(
-        InternshipApplication,
-        on_delete=models.CASCADE,
-        related_name="weekly_logbooks"
+        InternshipApplication, on_delete=models.CASCADE, related_name="weekly_logbooks"
     )
 
     week_number = models.PositiveIntegerField()
 
     status = models.CharField(
-        max_length=20,
-        choices=Status.choices,
-        default=Status.DRAFT
+        max_length=20, choices=Status.choices, default=Status.DRAFT
     )
 
     student_comment = models.TextField(blank=True)
@@ -523,17 +595,11 @@ class WeeklyLogbook(TimeStampedModel):
     advisor_comment = models.TextField(blank=True)
 
     verified_by = models.ForeignKey(
-        CompanyMentor,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True
+        CompanyMentor, on_delete=models.SET_NULL, null=True, blank=True
     )
 
     reviewed_by = models.ForeignKey(
-        Supervisor,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True
+        Supervisor, on_delete=models.SET_NULL, null=True, blank=True
     )
 
     submitted_at = models.DateTimeField(null=True, blank=True)
@@ -545,17 +611,14 @@ class WeeklyLogbook(TimeStampedModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["internship", "week_number"],
-                name="unique_weekly_logbook"
+                fields=["internship", "week_number"], name="unique_weekly_logbook"
             )
         ]
 
-class DailyLogEntry(TimeStampedModel):
 
+class DailyLogEntry(TimeStampedModel):
     weekly_logbook = models.ForeignKey(
-        WeeklyLogbook,
-        on_delete=models.CASCADE,
-        related_name="daily_entries"
+        WeeklyLogbook, on_delete=models.CASCADE, related_name="daily_entries"
     )
 
     day_number = models.PositiveIntegerField()

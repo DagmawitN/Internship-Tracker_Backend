@@ -176,9 +176,8 @@ class CompleteInternshipView(APIView):
             raise ValidationError("Internship must be ongoing")
 
         total_hours = Attendance.objects.filter(
-            internship__student=internship.student,
-            internship__position=internship.position,
-        ).aggregate(total=Sum("hours_worked"))["total"] or Decimal("0")
+            internship=internship,
+        ).aggregate(total=Sum("total_hours"))["total"] or Decimal("0")
 
         internship.status = "COMPLETED"
         internship.end_date = timezone.now().date()
