@@ -44,7 +44,7 @@ from core.views.report_views import (
 from core.views.student_views import AcceptOfferView
 from core.views.user_views import StudentsList, UsersList, UserViewSet
 from core.views.report_views import CreateWeeklyLogbookAPIView, AddDailyLogEntryAPIView, SubmitFinalReportAPIView, AdvisorFinalReportListAPIView, AdvisorWeeklyLogbookListAPIView
-from core.views.evaluation_views import FinalIndustryEvaluationListCreateAPIView, FinalIndustryEvaluationDetailAPIView
+from core.views.evaluation_views import FinalIndustryEvaluationListCreateAPIView, FinalIndustryEvaluationDetailAPIView, AdvisorEvaluationListCreateAPIView, AdvisorEvaluationDetailAPIView
 
 
 
@@ -252,4 +252,6 @@ urlpatterns = [
     path("advisor/logbooks/", AdvisorWeeklyLogbookListAPIView.as_view(), name="advisor-weekly-logbooks"),
     path("evaluations/final-industry/", FinalIndustryEvaluationListCreateAPIView.as_view(), name="final-industry-evaluations-list"),
     path("evaluations/final-industry/<int:id>/", FinalIndustryEvaluationDetailAPIView.as_view(), name="final-industry-evaluation-detail"),
+    path("evaluations/advisor/", AdvisorEvaluationListCreateAPIView.as_view(), name="advisor-evaluations-list"),
+    path("evaluations/advisor/<int:id>/", AdvisorEvaluationDetailAPIView.as_view(), name="advisor-evaluation-detail"),
 ]

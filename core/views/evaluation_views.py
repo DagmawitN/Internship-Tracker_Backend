@@ -1,7 +1,7 @@
 from rest_framework import generics, serializers
 from rest_framework.permissions import IsAuthenticated
-from core.models import FinalIndustryEvaluation, CompanyMentor, AdvisorAssignment
-from core.serializers.report_serializers import FinalIndustryEvaluationSerializer
+from core.models import FinalIndustryEvaluation, CompanyMentor, AdvisorAssignment, AdvisorEvaluation
+from core.serializers.evaluation_serializers import FinalIndustryEvaluationSerializer, AdvisorEvaluationSerializer
 
 
 class FinalIndustryEvaluationListCreateAPIView(generics.ListCreateAPIView):
@@ -22,17 +22,17 @@ class FinalIndustryEvaluationListCreateAPIView(generics.ListCreateAPIView):
         user = self.request.user
         
         # Check if user is a company mentor
-        try:
-            company_mentor = CompanyMentor.objects.get(user=user)
+        company_mentor_ids = CompanyMentor.objects.filter(user=user).values_list(
+            'pk', flat=True
+        )
+        if company_mentor_ids:
             return FinalIndustryEvaluation.objects.filter(
-                company_mentor=company_mentor
+                company_mentor__in=company_mentor_ids
             ).select_related(
                 'internship__student__user',
                 'internship__position__company',
                 'company_mentor__user'
             )
-        except CompanyMentor.DoesNotExist:
-            pass
         
         # Check if user is an advisor
         if hasattr(user, 'role') and user.role.role_name == 'Advisor':
@@ -55,21 +55,20 @@ class FinalIndustryEvaluationListCreateAPIView(generics.ListCreateAPIView):
         """
         Ensure only company mentors can create evaluations and validate permissions.
         """
-        # Get company mentor
-        try:
-            company_mentor = CompanyMentor.objects.get(user=self.request.user)
-        except CompanyMentor.DoesNotExist:
-            raise serializers.ValidationError(
-                "Only company supervisors/mentors can submit evaluations."
-            )
-        
         # Get internship
         internship = serializer.validated_data.get('internship')
-        
-        # Verify mentor is assigned to this internship
-        if internship.mentor != company_mentor:
+        if internship is None:
             raise serializers.ValidationError(
-                "You can only evaluate internships assigned to you."
+                "Internship must be provided."
+            )
+
+        company_mentor = CompanyMentor.objects.filter(
+            user=self.request.user,
+            id=internship.mentor_id,
+        ).first()
+        if company_mentor is None:
+            raise serializers.ValidationError(
+                "Only the company mentor assigned to this internship can submit the evaluation."
             )
         
         # Check if evaluation already exists
@@ -82,11 +81,10 @@ class FinalIndustryEvaluationListCreateAPIView(generics.ListCreateAPIView):
         serializer.save(company_mentor=company_mentor)
 
 
-class FinalIndustryEvaluationDetailAPIView(generics.RetrieveUpdateAPIView):
+class FinalIndustryEvaluationDetailAPIView(generics.RetrieveAPIView):
     """
-    API endpoint to retrieve or update a specific final industry evaluation.
+    API endpoint to retrieve a specific final industry evaluation.
     GET: Retrieve evaluation details
-    PUT/PATCH: Update evaluation
     """
     permission_classes = [IsAuthenticated]
     serializer_class = FinalIndustryEvaluationSerializer
@@ -97,17 +95,17 @@ class FinalIndustryEvaluationDetailAPIView(generics.RetrieveUpdateAPIView):
         user = self.request.user
         
         # Check if user is a company mentor
-        try:
-            company_mentor = CompanyMentor.objects.get(user=user)
+        company_mentor_ids = CompanyMentor.objects.filter(user=user).values_list(
+            'pk', flat=True
+        )
+        if company_mentor_ids:
             return FinalIndustryEvaluation.objects.filter(
-                company_mentor=company_mentor
+                company_mentor__in=company_mentor_ids
             ).select_related(
                 'internship__student__user',
                 'internship__position__company',
                 'company_mentor__user'
             )
-        except CompanyMentor.DoesNotExist:
-            pass
         
         # Check if user is an advisor
         if hasattr(user, 'role') and user.role.role_name == 'Advisor':
@@ -124,21 +122,84 @@ class FinalIndustryEvaluationDetailAPIView(generics.RetrieveUpdateAPIView):
             )
         
         return FinalIndustryEvaluation.objects.none()
+
+
+class AdvisorEvaluationListCreateAPIView(generics.ListCreateAPIView):
+    """
+    API endpoint for advisors to submit and view advisor evaluations.
+    POST: Create a new advisor evaluation
+    GET: List advisor evaluations
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = AdvisorEvaluationSerializer
     
-    def perform_update(self, serializer):
-        """Only company mentors can update their own evaluations."""
-        evaluation = self.get_object()
+    def get_queryset(self):
+        """
+        Filter evaluations based on user role:
+        - Advisors see evaluations they submitted
+        - Other authorized users can view
+        """
+        user = self.request.user
         
-        # Verify user is the company mentor who submitted this
-        try:
-            company_mentor = CompanyMentor.objects.get(user=self.request.user)
-            if evaluation.company_mentor != company_mentor:
-                raise serializers.ValidationError(
-                    "You can only update your own evaluations."
-                )
-        except CompanyMentor.DoesNotExist:
+        # Advisors see their own evaluations
+        return AdvisorEvaluation.objects.filter(
+            advisor=user
+        ).select_related(
+            'internship__student__user',
+            'internship__position__company',
+            'advisor'
+        )
+    
+    def perform_create(self, serializer):
+        """
+        Ensure only assigned advisors can create evaluations.
+        """
+        # Get internship
+        internship = serializer.validated_data.get('internship')
+        if internship is None:
             raise serializers.ValidationError(
-                "Only company supervisors/mentors can update evaluations."
+                "Internship must be provided."
             )
         
-        serializer.save()
+        # Verify advisor is assigned to this internship
+        is_assigned = AdvisorAssignment.objects.filter(
+            internship=internship,
+            advisor=self.request.user,
+        ).exists()
+        
+        if not is_assigned:
+            raise serializers.ValidationError(
+                "Only the advisor assigned to this internship can submit the evaluation."
+            )
+        
+        # Check if evaluation already exists
+        if AdvisorEvaluation.objects.filter(internship=internship).exists():
+            raise serializers.ValidationError(
+                "Advisor evaluation for this internship already exists."
+            )
+        
+        # Save with advisor
+        serializer.save(advisor=self.request.user)
+
+
+class AdvisorEvaluationDetailAPIView(generics.RetrieveAPIView):
+    """
+    API endpoint to retrieve a specific advisor evaluation.
+    GET: Retrieve evaluation details
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = AdvisorEvaluationSerializer
+    lookup_field = 'id'
+    
+    def get_queryset(self):
+        """Filter evaluations for authorized advisors."""
+        user = self.request.user
+        
+        # Return evaluations submitted by the current advisor
+        return AdvisorEvaluation.objects.filter(
+            advisor=user
+        ).select_related(
+            'internship__student__user',
+            'internship__position__company',
+            'advisor'
+        )

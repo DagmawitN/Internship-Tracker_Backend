@@ -507,24 +507,71 @@ class AdvisorAssignment(TimeStampedModel):
 
 
 class AdvisorEvaluation(TimeStampedModel):
+    """
+    Model for University Advisor Evaluation of internship performance.
+    Submitted by assigned university advisor/supervisor.
+    Scores range from 1-5.
+    """
+    
+    # Basic Information
+    internship = models.OneToOneField(
+        InternshipApplication,
+        on_delete=models.CASCADE,
+        related_name="advisor_evaluation"
+    )
     advisor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="advisor_evaluations",
+        related_name="submitted_advisor_evaluations",
     )
-    internship = models.ForeignKey(
-        InternshipApplication,
-        on_delete=models.CASCADE,
-        related_name="advisor_evaluations",
-    )
-    evaluation_date = models.DateField(null=True, blank=True)
-    score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    
+    # Evaluation Scores (1-5 scale)
+    technical_followup_score = models.PositiveIntegerField(default=0)
+    communication_score = models.PositiveIntegerField(default=0)
+    attendance_followup_score = models.PositiveIntegerField(default=0)
+    professionalism_score = models.PositiveIntegerField(default=0)
+    report_quality_score = models.PositiveIntegerField(default=0)
+    
+    # Comments
     comments = models.TextField(blank=True)
+    
+    # Calculated Fields
+    total_score = models.PositiveIntegerField(default=0)
+    weighted_score = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    
+    class Meta:
+        verbose_name = "Advisor Evaluation"
+        verbose_name_plural = "Advisor Evaluations"
+        unique_together = ("internship",)
+    
+    def calculate_scores(self):
+        """Calculate total and weighted scores."""
+        # Total score (sum of 5 components, each 1-5, max = 25)
+        self.total_score = (
+            self.technical_followup_score +
+            self.communication_score +
+            self.attendance_followup_score +
+            self.professionalism_score +
+            self.report_quality_score
+        )
+        
+        # Weighted score = (total_score / 25) * 20
+        # Converts 25-point scale to 20-point scale
+        if self.total_score > 0:
+            self.weighted_score = (self.total_score / 25) * 20
+        else:
+            self.weighted_score = 0
+    
+    def save(self, *args, **kwargs):
+        """Auto-calculate scores before saving."""
+        self.calculate_scores()
+        super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"AdvisorEvaluation {self.id} by {self.advisor} for {self.internship}"
+        return f"Advisor Evaluation - {self.internship.student} by {self.advisor}"
 
 
 class PreRegisteredStudent(TimeStampedModel):
