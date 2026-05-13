@@ -512,12 +512,12 @@ class AdvisorEvaluation(TimeStampedModel):
     Submitted by assigned university advisor/supervisor.
     Scores range from 1-5.
     """
-    
+
     # Basic Information
     internship = models.OneToOneField(
         InternshipApplication,
         on_delete=models.CASCADE,
-        related_name="advisor_evaluation"
+        related_name="advisor_evaluation",
     )
     advisor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -526,45 +526,45 @@ class AdvisorEvaluation(TimeStampedModel):
         blank=True,
         related_name="submitted_advisor_evaluations",
     )
-    submitted_at = models.DateTimeField(auto_now_add=True)
-    
+    submitted_at = models.DateTimeField(null=True, blank=True)
+
     # Evaluation Scores (1-5 scale)
     technical_followup_score = models.PositiveIntegerField(default=0)
     communication_score = models.PositiveIntegerField(default=0)
     attendance_followup_score = models.PositiveIntegerField(default=0)
     professionalism_score = models.PositiveIntegerField(default=0)
     report_quality_score = models.PositiveIntegerField(default=0)
-    
+
     # Comments
     comments = models.TextField(blank=True)
-    
+
     # Calculated Fields
     total_score = models.PositiveIntegerField(default=0)
     weighted_score = models.DecimalField(max_digits=5, decimal_places=2, default=0)
-    
+
     class Meta:
         verbose_name = "Advisor Evaluation"
         verbose_name_plural = "Advisor Evaluations"
         unique_together = ("internship",)
-    
+
     def calculate_scores(self):
         """Calculate total and weighted scores."""
         # Total score (sum of 5 components, each 1-5, max = 25)
         self.total_score = (
-            self.technical_followup_score +
-            self.communication_score +
-            self.attendance_followup_score +
-            self.professionalism_score +
-            self.report_quality_score
+            self.technical_followup_score
+            + self.communication_score
+            + self.attendance_followup_score
+            + self.professionalism_score
+            + self.report_quality_score
         )
-        
+
         # Weighted score = (total_score / 25) * 20
         # Converts 25-point scale to 20-point scale
         if self.total_score > 0:
             self.weighted_score = (self.total_score / 25) * 20
         else:
             self.weighted_score = 0
-    
+
     def save(self, *args, **kwargs):
         """Auto-calculate scores before saving."""
         self.calculate_scores()
@@ -680,29 +680,29 @@ class FinalIndustryEvaluation(TimeStampedModel):
     Model for Final Industry Evaluation Form submitted by company supervisors
     at the end of internship. Scores range from 1-5.
     """
-    
+
     # Basic Information
     internship = models.OneToOneField(
         InternshipApplication,
         on_delete=models.CASCADE,
-        related_name="final_industry_evaluation"
+        related_name="final_industry_evaluation",
     )
     company_mentor = models.ForeignKey(
         CompanyMentor,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="final_evaluations"
+        related_name="final_evaluations",
     )
-    submitted_at = models.DateTimeField(auto_now_add=True)
-    
+    submitted_at = models.DateTimeField(null=True, blank=True)
+
     # SECTION A — JOB PERFORMANCE (1-5 scale)
     knowledge_about_task = models.PositiveIntegerField(default=0)
     problem_solving = models.PositiveIntegerField(default=0)
     quality_of_work = models.PositiveIntegerField(default=0)
     punctuality_in_production = models.PositiveIntegerField(default=0)
     initiative = models.PositiveIntegerField(default=0)
-    
+
     # SECTION B — SOFT SKILLS (1-5 scale)
     dedication = models.PositiveIntegerField(default=0)
     cooperation = models.PositiveIntegerField(default=0)
@@ -711,12 +711,12 @@ class FinalIndustryEvaluation(TimeStampedModel):
     socialization = models.PositiveIntegerField(default=0)
     communication = models.PositiveIntegerField(default=0)
     decision_making = models.PositiveIntegerField(default=0)
-    
+
     # SECTION C — COMMENTS
     student_potential = models.TextField(blank=True)
     overall_comments = models.TextField(blank=True)
     would_offer_job = models.BooleanField(default=False)
-    
+
     # CALCULATED FIELDS
     section_a_total = models.PositiveIntegerField(default=0)
     section_b_total = models.PositiveIntegerField(default=0)
@@ -724,48 +724,88 @@ class FinalIndustryEvaluation(TimeStampedModel):
     overall_student_performance = models.DecimalField(
         max_digits=5, decimal_places=2, default=0
     )
-    
+
     class Meta:
         verbose_name = "Final Industry Evaluation"
         verbose_name_plural = "Final Industry Evaluations"
         unique_together = ("internship",)
-    
+
     def calculate_totals(self):
         """Calculate section totals and overall performance."""
         # Section A total (5 fields)
         self.section_a_total = (
-            self.knowledge_about_task +
-            self.problem_solving +
-            self.quality_of_work +
-            self.punctuality_in_production +
-            self.initiative
+            self.knowledge_about_task
+            + self.problem_solving
+            + self.quality_of_work
+            + self.punctuality_in_production
+            + self.initiative
         )
-        
+
         # Section B total (7 fields)
         self.section_b_total = (
-            self.dedication +
-            self.cooperation +
-            self.discipline +
-            self.responsibility +
-            self.socialization +
-            self.communication +
-            self.decision_making
+            self.dedication
+            + self.cooperation
+            + self.discipline
+            + self.responsibility
+            + self.socialization
+            + self.communication
+            + self.decision_making
         )
-        
+
         # Total mark (Section A + Section B)
         self.total_mark = self.section_a_total + self.section_b_total
-        
+
         # Overall student performance = (total_mark / 60) * 20
         # Max score is 60 (5*5 + 7*5), converted to 20 points scale
         if self.total_mark > 0:
             self.overall_student_performance = (self.total_mark / 60) * 20
         else:
             self.overall_student_performance = 0
-    
+
     def save(self, *args, **kwargs):
         """Auto-calculate totals before saving."""
         self.calculate_totals()
         super().save(*args, **kwargs)
-    
+
     def __str__(self):
         return f"Final Industry Evaluation - {self.internship.student} ({self.internship.position.company.company_name})"
+
+
+class Notification(models.Model):
+    """Generic notification record for any system event."""
+
+    class NotificationType(models.TextChoices):
+        INTERNSHIP_STATUS_CHANGED = (
+            "INTERNSHIP_STATUS_CHANGED",
+            "Internship Status Changed",
+        )
+        REPORT_SUBMITTED = "REPORT_SUBMITTED", "Report Submitted"
+        REPORT_REVIEWED = "REPORT_REVIEWED", "Report Reviewed"
+        GENERAL = "GENERAL", "General"
+
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    notification_type = models.CharField(
+        max_length=40,
+        choices=NotificationType.choices,
+        default=NotificationType.GENERAL,
+    )
+    is_read = models.BooleanField(default=False)
+    # Optional – links this notification to any model instance
+    related_object_id = models.PositiveIntegerField(null=True, blank=True)
+    related_object_type = models.CharField(max_length=100, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["recipient", "is_read"]),
+        ]
+
+    def __str__(self):
+        return f"[{self.notification_type}] {self.recipient} — {self.title}"
