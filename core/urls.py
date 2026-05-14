@@ -33,6 +33,16 @@ from core.views.company_views import (
     VerifiedCompaniesListView,
 )
 from core.views.coordinator_views import DepartmentReviewView
+from core.views.dashboard_views import (
+    AdminDashboardView,
+    AdvisorDashboardView,
+    CompanyPerformanceView,
+    CoordinatorDashboardView,
+    DepartmentStatisticsView,
+    MentorDashboardView,
+    PlacementAnalyticsView,
+    StudentDashboardView,
+)
 from core.views.department_views import DepartmentViewSet
 from core.views.evaluation_views import (
     AdvisorEvaluationDetailAPIView,
@@ -40,7 +50,17 @@ from core.views.evaluation_views import (
     FinalIndustryEvaluationDetailAPIView,
     FinalIndustryEvaluationListCreateAPIView,
 )
-from core.views.internship_views import *
+from core.views.internship_views import (
+    AvailableInternshipPositionListView,
+    CancelInternshipView,
+    CompleteInternshipView,
+    InternshipApplicationCreateView,
+    InternshipListCreateView,
+    InternshipNotesView,
+    InternshipRecordListView,
+    InternshipRetrieveUpdateView,
+    StartInternshipsByPositionView,
+)
 from core.views.notification_views import (
     MarkAllNotificationsReadView,
     MarkNotificationReadView,
@@ -134,6 +154,12 @@ urlpatterns = [
         "company/<int:company_id>/applicants/<int:id>/",
         CompanyApplicantActionView.as_view(),
         name="company-applicant-action",
+    ),
+    # ------------------------------------------------------------------ Internship records (execution entities – search/filter)
+    path(
+        "internship-records/",
+        InternshipRecordListView.as_view(),
+        name="internship-records",
     ),
     # ------------------------------------------------------------------ Internship positions & lifecycle
     path(
@@ -259,6 +285,36 @@ urlpatterns = [
         "advisor/logbooks/",
         AdvisorWeeklyLogbookListAPIView.as_view(),
         name="advisor-weekly-logbooks",
+    ),
+    # ------------------------------------------------------------------ Dashboards
+    path(
+        "dashboard/student/", StudentDashboardView.as_view(), name="dashboard-student"
+    ),
+    path(
+        "dashboard/advisor/", AdvisorDashboardView.as_view(), name="dashboard-advisor"
+    ),
+    path("dashboard/mentor/", MentorDashboardView.as_view(), name="dashboard-mentor"),
+    path(
+        "dashboard/coordinator/",
+        CoordinatorDashboardView.as_view(),
+        name="dashboard-coordinator",
+    ),
+    path("dashboard/admin/", AdminDashboardView.as_view(), name="dashboard-admin"),
+    # ------------------------------------------------------------------ Analytics
+    path(
+        "analytics/placements/",
+        PlacementAnalyticsView.as_view(),
+        name="analytics-placements",
+    ),
+    path(
+        "analytics/company-performance/",
+        CompanyPerformanceView.as_view(),
+        name="analytics-company-performance",
+    ),
+    path(
+        "analytics/departments/",
+        DepartmentStatisticsView.as_view(),
+        name="analytics-departments",
     ),
     # ------------------------------------------------------------------ Evaluations
     path(

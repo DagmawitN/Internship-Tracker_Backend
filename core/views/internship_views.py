@@ -1,10 +1,13 @@
 from decimal import Decimal
 
+from core.filters.internship_filters import InternshipFilter
 from django.db.models import Case, Count, F, Q, Sum, Value, When
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -22,8 +25,14 @@ from core.serializers.internship_serializer import (
     InternshipApplicationSerializer,
     InternshipNotesSerializer,
     InternshipPositionSerializer,
+    InternshipRecordSerializer,
 )
 from core.services.notification_service import create_notification
+
+
+def _internship_role(user):
+    """Return the user's role_name or None."""
+    return getattr(user.role, "role_name", None) if user.role else None
 
 
 class InternshipApplicationCreateView(generics.CreateAPIView):
@@ -107,6 +116,68 @@ class AvailableInternshipPositionListView(generics.ListAPIView):
                 | Q(accepted_applications__lt=F("max_applicants"))
             )
         )
+
+
+class InternshipRecordListView(generics.ListAPIView):
+    """
+    GET /internship-records/
+
+    Returns Internship execution records (not InternshipPosition job postings).
+    Supports filtering, text search, and ordering.
+
+    Role restrictions are applied in get_queryset() before filter backends run.
+    """
+
+    serializer_class = InternshipRecordSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = InternshipFilter
+    search_fields = [
+        "student__user__first_name",
+        "student__user__last_name",
+        "student__student_id",
+        "company__company_name",
+        "position__title",
+    ]
+    ordering_fields = ["start_date", "end_date", "status"]
+    ordering = ["-start_date"]
+
+    def get_queryset(self):
+        user = self.request.user
+        role = _internship_role(user)
+
+        base_qs = Internship.objects.select_related(
+            "student__user",
+            "student__department",
+            "student__advisor__user",
+            "position",
+            "position__company",
+            "company",
+            "mentor__user",
+        )
+
+        if role == "STUDENT":
+            return base_qs.filter(student__user=user)
+
+        if role == "ADVISOR":
+            return base_qs.filter(student__advisor__user=user)
+
+        if role == "COMPANY":
+            mentor = CompanyMentor.objects.filter(user=user).first()
+            if not mentor:
+                return base_qs.none()
+            return base_qs.filter(company=mentor.company)
+
+        if role == "COORDINATOR":
+            staff = getattr(user, "staff", None)
+            if not staff:
+                return base_qs.none()
+            return base_qs.filter(student__department=staff.department)
+
+        if role == "ADMIN":
+            return base_qs.all()
+
+        return base_qs.none()
 
 
 class StartInternshipsByPositionView(APIView):

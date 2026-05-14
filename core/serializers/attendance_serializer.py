@@ -27,6 +27,11 @@ class AttendanceSerializer(serializers.ModelSerializer):
     student_email = serializers.EmailField(
         source="internship.student.user.email", read_only=True
     )
+    student_name = serializers.SerializerMethodField()
+    company_name = serializers.SerializerMethodField()
+    department = serializers.CharField(
+        source="internship.student.department.department_name", read_only=True
+    )
 
     class Meta:
         model = Attendance
@@ -35,6 +40,9 @@ class AttendanceSerializer(serializers.ModelSerializer):
             "internship_id",
             "position_title",
             "student_email",
+            "student_name",
+            "company_name",
+            "department",
             "date",
             "check_in_time",
             "check_out_time",
@@ -49,3 +57,14 @@ class AttendanceSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = fields
+
+    def get_student_name(self, obj):
+        u = obj.internship.student.user
+        return u.get_full_name().strip() or u.username
+
+    def get_company_name(self, obj):
+        company = obj.internship.company
+        if company:
+            return company.company_name
+        pos = obj.internship.position
+        return pos.company.company_name if pos else None

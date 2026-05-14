@@ -106,3 +106,69 @@ class InternshipNotesSerializer(serializers.Serializer):
     mode = serializers.ChoiceField(
         choices=["append", "overwrite"], required=False, default="append"
     )
+
+
+class InternshipRecordSerializer(serializers.ModelSerializer):
+    """
+    Read-only serializer for the Internship execution model.
+    Exposes denormalized fields useful for list/search views.
+    """
+
+    student_id = serializers.CharField(source="student.student_id", read_only=True)
+    student_name = serializers.SerializerMethodField()
+    student_email = serializers.EmailField(source="student.user.email", read_only=True)
+    department = serializers.CharField(
+        source="student.department.department_name", read_only=True
+    )
+    position_title = serializers.CharField(source="position.title", read_only=True)
+    company_name = serializers.SerializerMethodField()
+    mentor_name = serializers.SerializerMethodField()
+    advisor = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Internship
+        fields = [
+            "id",
+            "student_id",
+            "student_name",
+            "student_email",
+            "department",
+            "position_title",
+            "company_name",
+            "mentor_name",
+            "advisor",
+            "status",
+            "start_date",
+            "end_date",
+            "total_hours",
+            "notes",
+        ]
+        read_only_fields = fields
+
+    def get_student_name(self, obj):
+        u = obj.student.user
+        return u.get_full_name().strip() or u.username
+
+    def get_company_name(self, obj):
+        return (
+            obj.company.company_name
+            if obj.company
+            else (obj.position.company.company_name if obj.position else None)
+        )
+
+    def get_mentor_name(self, obj):
+        if obj.mentor and obj.mentor.user:
+            u = obj.mentor.user
+            return u.get_full_name().strip() or u.username
+        return None
+
+    def get_advisor(self, obj):
+        adv = obj.student.advisor
+        if not adv:
+            return None
+        u = adv.user
+        return {
+            "id": adv.id,
+            "name": u.get_full_name().strip() or u.username,
+            "email": u.email,
+        }
