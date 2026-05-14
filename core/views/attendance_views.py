@@ -2,10 +2,13 @@ import math
 from datetime import datetime, timedelta
 from decimal import Decimal
 
+from core.filters.attendance_filters import AttendanceFilter
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -226,13 +229,34 @@ class CheckOutView(APIView):
 
 
 class AttendanceListView(generics.ListAPIView):
+    """
+    GET /attendance/
+
+    Role-based queryset (via get_queryset) + filter/search/ordering on top.
+
+    Filters   : ?status=LATE  ?date=2026-05-01  ?start_date=  ?end_date=
+                ?internship=4  ?student=Dagim  ?company=5  ?department=2
+                ?is_location_verified=true
+    Search    : ?search=<text>  (student name, company, position title)
+    Ordering  : ?ordering=date | -date | status | total_hours
+    """
+
     serializer_class = AttendanceSerializer
     permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = AttendanceFilter
+    search_fields = [
+        "internship__student__user__first_name",
+        "internship__student__user__last_name",
+        "internship__student__student_id",
+        "internship__company__company_name",
+        "internship__position__title",
+    ]
+    ordering_fields = ["date", "status", "total_hours", "created_at"]
+    ordering = ["-date"]
 
     def get_queryset(self):
-        return _attendance_queryset_for_user(self.request.user).order_by(
-            "-date", "-created_at"
-        )
+        return _attendance_queryset_for_user(self.request.user)
 
 
 class AttendanceDetailView(generics.RetrieveAPIView):
