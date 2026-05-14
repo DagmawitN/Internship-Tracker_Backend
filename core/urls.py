@@ -34,19 +34,28 @@ from core.views.company_views import (
 )
 from core.views.coordinator_views import DepartmentReviewView
 from core.views.department_views import DepartmentViewSet
+from core.views.evaluation_views import (
+    AdvisorEvaluationDetailAPIView,
+    AdvisorEvaluationListCreateAPIView,
+    FinalIndustryEvaluationDetailAPIView,
+    FinalIndustryEvaluationListCreateAPIView,
+)
 from core.views.internship_views import *
+from core.views.notification_views import (
+    MarkAllNotificationsReadView,
+    MarkNotificationReadView,
+    NotificationListView,
+)
 from core.views.profile_views import MeView
 from core.views.report_views import (
     AddDailyLogEntryAPIView,
+    AdvisorFinalReportListAPIView,
+    AdvisorWeeklyLogbookListAPIView,
     CreateWeeklyLogbookAPIView,
     SubmitFinalReportAPIView,
 )
 from core.views.student_views import AcceptOfferView
 from core.views.user_views import StudentsList, UsersList, UserViewSet
-from core.views.report_views import CreateWeeklyLogbookAPIView, AddDailyLogEntryAPIView, SubmitFinalReportAPIView, AdvisorFinalReportListAPIView, AdvisorWeeklyLogbookListAPIView
-from core.views.evaluation_views import FinalIndustryEvaluationListCreateAPIView, FinalIndustryEvaluationDetailAPIView, AdvisorEvaluationListCreateAPIView, AdvisorEvaluationDetailAPIView
-
-
 
 urlpatterns = [
     # ------------------------------------------------------------------ Auth
@@ -126,7 +135,7 @@ urlpatterns = [
         CompanyApplicantActionView.as_view(),
         name="company-applicant-action",
     ),
-    # ------------------------------------------------------------------ Internship positions
+    # ------------------------------------------------------------------ Internship positions & lifecycle
     path(
         "internship-positions/",
         AvailableInternshipPositionListView.as_view(),
@@ -173,21 +182,26 @@ urlpatterns = [
         name="advisor-internship-notes",
     ),
     # ------------------------------------------------------------------ Application review workflow
+    # Step 1 – Mentor reviews (no coordinator gate required)
     path(
         "applications/<int:pk>/mentor-review/",
         MentorReviewView.as_view(),
         name="mentor-review",
     ),
+    # Step 2 – Coordinator assigns advisor via /students/{pk}/assign-advisor/
+    # Step 3 – Advisor reviews
     path(
         "applications/<int:pk>/advisor-review/",
         AdvisorReviewView.as_view(),
         name="advisor-review",
     ),
+    # Step 4 – Student accepts offer (requires advisor approval)
     path(
         "applications/<int:pk>/accept-offer/",
         AcceptOfferView.as_view(),
         name="accept-offer",
     ),
+    # Legacy coordinator dept-review (kept for backward compat)
     path(
         "applications/<int:pk>/dept-review/",
         DepartmentReviewView.as_view(),
@@ -208,50 +222,63 @@ urlpatterns = [
         "attendance/<int:pk>/", AttendanceDetailView.as_view(), name="attendance-detail"
     ),
     path(
-        "departments/<int:pk>/",
-        DepartmentViewSet.as_view(
-            {
-                "get": "retrieve",
-                "put": "update",
-                "patch": "partial_update",
-                "delete": "destroy",
-            }
-        ),
-        name="department-detail",
+        "attendance/<int:pk>/notes/",
+        AttendanceNotesUpdateView.as_view(),
+        name="attendance-notes",
     ),
-    path("register/staff/", StaffRegisterView.as_view(), name="staff-register"),
-    path("me/", MeView.as_view(), name="me"),
-    # reviews of internship application before acceptance
-    path("applications/<int:pk>/dept-review/", DepartmentReviewView.as_view()),
-    path("applications/<int:pk>/mentor-review/", MentorReviewView.as_view()),
-    path("applications/<int:pk>/accept-offer/", AcceptOfferView.as_view()),
-    path('auth/student/register/', StudentRegisterView.as_view(), name='student-register'),
-    path('auth/company/register/', CompanyRegisterView.as_view(), name='company-register'),
-    path('auth/login/', LoginView.as_view(), name='login'),
-    path('auth/logout/', LogoutView.as_view(), name='logout'),
-    path('auth/password-reset/request/', PasswordResetRequestView.as_view(), name='password-reset-request'),
-    path('auth/password-reset/confirm/', PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
-    path('admin/company/<int:id>/approve/', CompanyApprovalView.as_view(), name='company-approval'),
-    path('company/<int:company_id>/applicants/', CompanyApplicantsListView.as_view(), name='company-applicants'),
-    path('company/<int:company_id>applicants/<int:id>/', CompanyApplicantActionView.as_view(), name='company-applicant-action'),
-    path('admin/users/admin-assign-role/',UserViewSet.as_view({'post': 'admin_assign_role'}),name='admin-assign-role'),
-    path('admin/users/coordinator-assign-role/',UserViewSet.as_view({'post': 'coordinator_assign_role'}),name='coordinator-assign-role'),
-    path('companies/verified/', VerifiedCompaniesListView.as_view(), name='verified-companies'),
-    path('students/',StudentsList.as_view(),name='user-list'),
-    path('users',UsersList.as_view(),name='users-list'),
-    path("internships/", InternshipListCreateView.as_view(), name="internship-list-create"),
-    path("internships/<int:pk>/", InternshipRetrieveUpdateView.as_view(), name="internship-detail"),
-    path('internships/<int:pk>/apply/', InternshipApplicationCreateView.as_view(), name='internship-apply'),
-    path('auth/verify-otp/', VerifyOTPView.as_view(), name='verify-otp'),
-    path('register/staff/', StaffRegisterView.as_view(), name='staff-register'),
-    path('me/', MeView.as_view(), name='me'),
-    path('logbooks/', CreateWeeklyLogbookAPIView.as_view()),
-    path('logbooks/<int:logbook_id>/entries/', AddDailyLogEntryAPIView.as_view()),
-    path("reports/final/<int:student_id>/", SubmitFinalReportAPIView.as_view(), name="submit-final-report"),
-    path("advisor/reports/final/", AdvisorFinalReportListAPIView.as_view(), name="advisor-final-reports"),
-    path("advisor/logbooks/", AdvisorWeeklyLogbookListAPIView.as_view(), name="advisor-weekly-logbooks"),
-    path("evaluations/final-industry/", FinalIndustryEvaluationListCreateAPIView.as_view(), name="final-industry-evaluations-list"),
-    path("evaluations/final-industry/<int:id>/", FinalIndustryEvaluationDetailAPIView.as_view(), name="final-industry-evaluation-detail"),
-    path("evaluations/advisor/", AdvisorEvaluationListCreateAPIView.as_view(), name="advisor-evaluations-list"),
-    path("evaluations/advisor/<int:id>/", AdvisorEvaluationDetailAPIView.as_view(), name="advisor-evaluation-detail"),
+    # ------------------------------------------------------------------ Notifications
+    path("notifications/", NotificationListView.as_view(), name="notification-list"),
+    path(
+        "notifications/read-all/",
+        MarkAllNotificationsReadView.as_view(),
+        name="notifications-read-all",
+    ),
+    path(
+        "notifications/<int:pk>/read/",
+        MarkNotificationReadView.as_view(),
+        name="notification-mark-read",
+    ),
+    # ------------------------------------------------------------------ Logbooks / reports
+    path("logbooks/", CreateWeeklyLogbookAPIView.as_view(), name="logbook-create"),
+    path(
+        "logbooks/<int:logbook_id>/entries/",
+        AddDailyLogEntryAPIView.as_view(),
+        name="logbook-entry-add",
+    ),
+    path(
+        "reports/final/<int:student_id>/",
+        SubmitFinalReportAPIView.as_view(),
+        name="submit-final-report",
+    ),
+    path(
+        "advisor/reports/final/",
+        AdvisorFinalReportListAPIView.as_view(),
+        name="advisor-final-reports",
+    ),
+    path(
+        "advisor/logbooks/",
+        AdvisorWeeklyLogbookListAPIView.as_view(),
+        name="advisor-weekly-logbooks",
+    ),
+    # ------------------------------------------------------------------ Evaluations
+    path(
+        "evaluations/final-industry/",
+        FinalIndustryEvaluationListCreateAPIView.as_view(),
+        name="final-industry-evaluations-list",
+    ),
+    path(
+        "evaluations/final-industry/<int:id>/",
+        FinalIndustryEvaluationDetailAPIView.as_view(),
+        name="final-industry-evaluation-detail",
+    ),
+    path(
+        "evaluations/advisor/",
+        AdvisorEvaluationListCreateAPIView.as_view(),
+        name="advisor-evaluations-list",
+    ),
+    path(
+        "evaluations/advisor/<int:id>/",
+        AdvisorEvaluationDetailAPIView.as_view(),
+        name="advisor-evaluation-detail",
+    ),
 ]

@@ -23,6 +23,7 @@ from core.serializers.internship_serializer import (
     InternshipNotesSerializer,
     InternshipPositionSerializer,
 )
+from core.services.notification_service import create_notification
 
 
 class InternshipApplicationCreateView(generics.CreateAPIView):
@@ -134,6 +135,13 @@ class StartInternshipsByPositionView(APIView):
         if internships.filter(start_date__gt=today).exists():
             raise ValidationError("Cannot start before scheduled date")
 
+        # Collect student users BEFORE bulk update for notification
+        student_users = list(
+            internships.select_related("student__user").values_list(
+                "student__user_id", flat=True
+            )
+        )
+
         updated = internships.update(
             status="ONGOING",
             start_date=Case(
@@ -141,6 +149,24 @@ class StartInternshipsByPositionView(APIView):
                 default=F("start_date"),
             ),
         )
+
+        # Notify each affected student
+        from django.contrib.auth import get_user_model
+
+        _User = get_user_model()
+        for uid in student_users:
+            try:
+                user = _User.objects.get(pk=uid)
+                create_notification(
+                    recipient=user,
+                    title="Internship Started",
+                    message=f"Your internship for '{position.title}' has started.",
+                    notification_type="INTERNSHIP_STATUS_CHANGED",
+                    related_object_id=position.id,
+                    related_object_type="InternshipPosition",
+                )
+            except _User.DoesNotExist:
+                pass
 
         return Response(
             {
@@ -184,6 +210,15 @@ class CompleteInternshipView(APIView):
         internship.total_hours = total_hours
         internship.save(update_fields=["status", "end_date", "total_hours"])
 
+        create_notification(
+            recipient=internship.student.user,
+            title="Internship Completed",
+            message=f"Your internship for '{internship.position.title}' has been marked as completed.",
+            notification_type="INTERNSHIP_STATUS_CHANGED",
+            related_object_id=internship.id,
+            related_object_type="Internship",
+        )
+
         return Response(
             {
                 "message": "Internship completed",
@@ -214,6 +249,15 @@ class CancelInternshipView(APIView):
         internship.status = "CANCELLED"
         internship.end_date = today
         internship.save(update_fields=["status", "end_date"])
+
+        create_notification(
+            recipient=internship.student.user,
+            title="Internship Cancelled",
+            message=f"Your internship for '{internship.position.title}' has been cancelled.",
+            notification_type="INTERNSHIP_STATUS_CHANGED",
+            related_object_id=internship.id,
+            related_object_type="Internship",
+        )
 
         return Response(
             {"message": "Internship cancelled", "internship_id": internship.id},
