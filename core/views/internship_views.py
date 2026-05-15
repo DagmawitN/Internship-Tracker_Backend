@@ -85,7 +85,7 @@ class InternshipListCreateView(generics.ListCreateAPIView):
 
 class InternshipRetrieveUpdateView(generics.RetrieveUpdateAPIView):
     serializer_class = InternshipPositionSerializer
-    permission_classes = [IsAuthenticated, IsCompanyMentor, IsMentorOfCompany]
+    permission_classes = [IsAuthenticated]
     queryset = InternshipPosition.objects.all()
 
     def perform_update(self, serializer):
