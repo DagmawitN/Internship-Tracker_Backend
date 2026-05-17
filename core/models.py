@@ -683,7 +683,7 @@ class FinalIndustryEvaluation(TimeStampedModel):
 
     # Basic Information
     internship = models.OneToOneField(
-        InternshipApplication,
+        Internship,
         on_delete=models.CASCADE,
         related_name="final_industry_evaluation",
     )
