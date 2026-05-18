@@ -221,3 +221,5 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=6), 
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
 }
+EMAIL_TIMEOUT = 10
+EMAIL_USE_LOCALTIME = False
