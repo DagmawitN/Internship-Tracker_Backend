@@ -32,7 +32,7 @@ from core.serializers.auth_serializers import (
     StaffRegistrationSerializer,
     StudentRegistrationSerializer,
 )
-from core.utils import async_send_otp, send_password_reset_email
+from core.utils import send_otp_email, send_password_reset_email
 
 User = get_user_model()
 
@@ -118,7 +118,7 @@ class StudentRegisterView(generics.CreateAPIView):
         # Production: send OTP, require verification before login
         otp_code = EmailOTP.generate_otp()
         EmailOTP.objects.create(user=user, otp=otp_code)
-        async_send_otp(user.email, otp_code)
+        send_otp_email(user.email, otp_code)
 
         return Response(
             {
@@ -195,7 +195,7 @@ class CompanyRegisterView(generics.CreateAPIView):
         # Production: send OTP, require verification before login
         otp_code = EmailOTP.generate_otp()
         EmailOTP.objects.create(user=user, otp=otp_code)
-        async_send_otp(user.email, otp_code)
+        send_otp_email(user.email, otp_code)
 
         return Response(
             {
@@ -333,7 +333,7 @@ class ResendOTPView(APIView):
             otp_code = EmailOTP.generate_otp()
             EmailOTP.objects.create(user=user, otp=otp_code)
 
-            async_send_otp(user.email, otp_code)
+            send_otp_email(user.email, otp_code)
 
             return Response({"message": "OTP resent successfully"})
 
@@ -396,7 +396,7 @@ class StaffRegisterView(generics.CreateAPIView):
         # Production: send OTP, require verification before login
         otp_code = EmailOTP.generate_otp()
         EmailOTP.objects.create(user=user, otp=otp_code)
-        async_send_otp(user.email, otp_code)
+        send_otp_email(user.email, otp_code)
 
         return Response(
             {
