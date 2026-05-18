@@ -74,6 +74,3 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
         + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
     )
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-def async_send_otp(email, otp):
-    Thread(target=send_otp_email, args=(email, otp)).start()
