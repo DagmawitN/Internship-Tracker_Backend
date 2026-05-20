@@ -90,7 +90,7 @@ class StaffRegistrationSerializer(serializers.Serializer):
     
     def validate(self, attrs):
         email = attrs.get("email")
-        pre_reg = PreRegisteredStaff.objects.filter(email=email, is_used=False).first()
+        pre_reg = PreRegisteredStaff.objects.filter(email__iexact=email,is_used=False).first()
         if not pre_reg:
             raise serializers.ValidationError("This staff is not pre-registered or already used.")
         attrs['pre_reg'] = pre_reg
