@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from core.models import Advisor, Internship, InternshipApplication, Student
+from core.models import Advisor, AdvisorAssignment, Internship, InternshipApplication, Student
 from core.permissions import IsAdvisorUser, IsCoordinatorUser
 from core.serializers.advisor_serializer import (
     AdvisorNotesSerializer,
@@ -78,12 +78,25 @@ class AssignAdvisorView(APIView):
         student.advisor = advisor
         student.save(update_fields=["advisor"])
 
-        # Auto-link advisor to any applications where mentor accepted but advisor not yet assigned
-        updated = InternshipApplication.objects.filter(
-            student=student,
-            mentor_status="ACCEPTED",
-            advisor__isnull=True,
-        ).update(advisor=advisor, dept_status="APPROVED")
+        # Auto-link advisor to applications where mentor accepted but advisor not yet assigned
+        pending_apps = list(
+            InternshipApplication.objects.filter(
+                student=student,
+                mentor_status="ACCEPTED",
+                advisor__isnull=True,
+            )
+        )
+        for application in pending_apps:
+            application.advisor = advisor
+            application.dept_status = "APPROVED"
+            application.save(update_fields=["advisor", "dept_status"])
+            AdvisorAssignment.objects.get_or_create(
+                advisor=advisor.user,
+                student=student.user,
+                internship=application,
+                defaults={"role": "ADVISOR"},
+            )
+        updated = len(pending_apps)
 
         return Response(
             {

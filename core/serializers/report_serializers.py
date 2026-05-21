@@ -75,23 +75,83 @@ class SubmitFinalReportSerializer(serializers.ModelSerializer):
         return report
 
 
-class AdvisorFinalReportListSerializer(serializers.ModelSerializer):
+class FinalReportDetailSerializer(serializers.ModelSerializer):
     student_full_name = serializers.SerializerMethodField()
     student_id = serializers.SerializerMethodField()
     company_name = serializers.SerializerMethodField()
     file_urls = serializers.SerializerMethodField()
+    examiner_reviewer_name = serializers.SerializerMethodField()
+    advisor_comment_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Report
         fields = [
-            'id',
-            'title',
-            'status',
-            'submission_date',
-            'student_full_name',
-            'student_id',
-            'company_name',
-            'file_urls',
+            "id",
+            "internship",
+            "title",
+            "status",
+            "submission_date",
+            "student_full_name",
+            "student_id",
+            "company_name",
+            "file_urls",
+            "examiner_reviewer",
+            "examiner_reviewer_name",
+            "examiner_approved_at",
+            "examiner_rejected_at",
+            "advisor_comment",
+            "advisor_comment_by",
+            "advisor_comment_by_name",
+            "advisor_comment_at",
+            "reviewed_at",
+            "approved_at",
+            "rejected_at",
+        ]
+        read_only_fields = fields
+
+    def get_student_full_name(self, obj):
+        user = obj.internship.student.user
+        return f"{user.first_name} {user.last_name}".strip() or user.username
+
+    def get_student_id(self, obj):
+        return obj.internship.student.student_id
+
+    def get_company_name(self, obj):
+        return obj.internship.position.company.company_name
+
+    def get_file_urls(self, obj):
+        return [f.file.url for f in obj.files.all() if f.file]
+
+    def get_examiner_reviewer_name(self, obj):
+        if obj.examiner_reviewer:
+            return obj.examiner_reviewer.get_full_name() or obj.examiner_reviewer.username
+        return None
+
+    def get_advisor_comment_by_name(self, obj):
+        if obj.advisor_comment_by:
+            return obj.advisor_comment_by.get_full_name() or obj.advisor_comment_by.username
+        return None
+
+
+class AdvisorFinalReportCommentSerializer(serializers.Serializer):
+    comment = serializers.CharField(required=True, allow_blank=False, max_length=5000)
+
+
+class AdvisorFinalReportListSerializer(FinalReportDetailSerializer):
+    class Meta(FinalReportDetailSerializer.Meta):
+        fields = [
+            "id",
+            "title",
+            "status",
+            "submission_date",
+            "student_full_name",
+            "student_id",
+            "company_name",
+            "file_urls",
+            "examiner_approved_at",
+            "examiner_rejected_at",
+            "advisor_comment",
+            "advisor_comment_at",
         ]
 
     def get_student_full_name(self, obj):

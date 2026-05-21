@@ -66,3 +66,13 @@ class IsAdvisorUser(BasePermission):
             and request.user.role
             and request.user.role.role_name == "ADVISOR"
         )
+
+
+class IsExaminerUser(BasePermission):
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and request.user.role
+            and request.user.role.role_name == "EXAMINER"
+        )

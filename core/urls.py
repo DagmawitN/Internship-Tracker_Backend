@@ -43,8 +43,41 @@ from core.views.report_views import (
 )
 from core.views.student_views import AcceptOfferView
 from core.views.user_views import StudentsList, UsersList, UserViewSet
-from core.views.report_views import CreateWeeklyLogbookAPIView, AddDailyLogEntryAPIView, SubmitFinalReportAPIView, AdvisorFinalReportListAPIView, AdvisorWeeklyLogbookListAPIView
-from core.views.evaluation_views import FinalIndustryEvaluationListCreateAPIView, FinalIndustryEvaluationDetailAPIView, AdvisorEvaluationListCreateAPIView, AdvisorEvaluationDetailAPIView
+from core.views.report_views import (
+    AddDailyLogEntryAPIView,
+    AdvisorFinalReportListAPIView,
+    AdvisorWeeklyLogbookListAPIView,
+    CreateWeeklyLogbookAPIView,
+    SubmitFinalReportAPIView,
+)
+from core.views.final_report_views import (
+    AdvisorFinalReportCommentAPIView,
+    ExaminerFinalReportApproveAPIView,
+    ExaminerFinalReportDetailAPIView,
+    ExaminerFinalReportDownloadAPIView,
+    ExaminerFinalReportListAPIView,
+    ExaminerFinalReportRejectAPIView,
+)
+from core.views.evaluation_views import (
+    AdvisorApprovalQueueAPIView,
+    AdvisorApprovalQueueDetailAPIView,
+    AdvisorEvaluationApproveAPIView,
+    AdvisorEvaluationDetailAPIView,
+    AdvisorEvaluationListCreateAPIView,
+    AdvisorEvaluationRejectAPIView,
+    AdvisorReportApproveAPIView,
+    CoordinatorOverallApprovalAPIView,
+    FinalIndustryEvaluationApproveAPIView,
+    FinalIndustryEvaluationDetailAPIView,
+    FinalIndustryEvaluationListCreateAPIView,
+    FinalIndustryEvaluationRejectAPIView,
+    MonthlyIndustryEvaluationApproveAPIView,
+    MonthlyIndustryEvaluationListCreateAPIView,
+    MonthlyIndustryEvaluationRejectAPIView,
+    OverallEvaluationDetailAPIView,
+    StudentEvaluationStatusAPIView,
+    StudentInternshipResultsAPIView,
+)
 
 
 
@@ -249,9 +282,117 @@ urlpatterns = [
     path('logbooks/<int:logbook_id>/entries/', AddDailyLogEntryAPIView.as_view()),
     path("reports/final/<int:student_id>/", SubmitFinalReportAPIView.as_view(), name="submit-final-report"),
     path("advisor/reports/final/", AdvisorFinalReportListAPIView.as_view(), name="advisor-final-reports"),
+    path(
+        "advisor/final-reports/<int:report_id>/comment/",
+        AdvisorFinalReportCommentAPIView.as_view(),
+        name="advisor-final-report-comment",
+    ),
+    path(
+        "examiner/final-reports/",
+        ExaminerFinalReportListAPIView.as_view(),
+        name="examiner-final-reports",
+    ),
+    path(
+        "examiner/final-reports/<int:report_id>/",
+        ExaminerFinalReportDetailAPIView.as_view(),
+        name="examiner-final-report-detail",
+    ),
+    path(
+        "examiner/final-reports/<int:report_id>/download/",
+        ExaminerFinalReportDownloadAPIView.as_view(),
+        name="examiner-final-report-download",
+    ),
+    path(
+        "examiner/final-reports/<int:report_id>/approve/",
+        ExaminerFinalReportApproveAPIView.as_view(),
+        name="examiner-final-report-approve",
+    ),
+    path(
+        "examiner/final-reports/<int:report_id>/reject/",
+        ExaminerFinalReportRejectAPIView.as_view(),
+        name="examiner-final-report-reject",
+    ),
     path("advisor/logbooks/", AdvisorWeeklyLogbookListAPIView.as_view(), name="advisor-weekly-logbooks"),
     path("evaluations/final-industry/", FinalIndustryEvaluationListCreateAPIView.as_view(), name="final-industry-evaluations-list"),
     path("evaluations/final-industry/<int:id>/", FinalIndustryEvaluationDetailAPIView.as_view(), name="final-industry-evaluation-detail"),
-    path("evaluations/advisor/", AdvisorEvaluationListCreateAPIView.as_view(), name="advisor-evaluations-list"),
-    path("evaluations/advisor/<int:id>/", AdvisorEvaluationDetailAPIView.as_view(), name="advisor-evaluation-detail"),
+    path(
+        "evaluations/advisor/",
+        AdvisorEvaluationListCreateAPIView.as_view(),
+        name="advisor-evaluations-list",
+    ),
+    path(
+        "evaluations/advisor/<int:id>/",
+        AdvisorEvaluationDetailAPIView.as_view(),
+        name="advisor-evaluation-detail",
+    ),
+    path(
+        "evaluations/advisor/<int:id>/approve/",
+        AdvisorEvaluationApproveAPIView.as_view(),
+        name="advisor-evaluation-approve",
+    ),
+    path(
+        "evaluations/advisor/<int:id>/reject/",
+        AdvisorEvaluationRejectAPIView.as_view(),
+        name="advisor-evaluation-reject",
+    ),
+    path(
+        "advisor/approval-queue/",
+        AdvisorApprovalQueueAPIView.as_view(),
+        name="advisor-approval-queue",
+    ),
+    path(
+        "advisor/approval-queue/<int:internship_id>/",
+        AdvisorApprovalQueueDetailAPIView.as_view(),
+        name="advisor-approval-queue-detail",
+    ),
+    path(
+        "evaluations/monthly/",
+        MonthlyIndustryEvaluationListCreateAPIView.as_view(),
+        name="monthly-industry-evaluations",
+    ),
+    path(
+        "evaluations/monthly/<int:id>/approve/",
+        MonthlyIndustryEvaluationApproveAPIView.as_view(),
+        name="monthly-evaluation-approve",
+    ),
+    path(
+        "evaluations/monthly/<int:id>/reject/",
+        MonthlyIndustryEvaluationRejectAPIView.as_view(),
+        name="monthly-evaluation-reject",
+    ),
+    path(
+        "evaluations/final-industry/<int:id>/approve/",
+        FinalIndustryEvaluationApproveAPIView.as_view(),
+        name="final-industry-evaluation-approve",
+    ),
+    path(
+        "evaluations/final-industry/<int:id>/reject/",
+        FinalIndustryEvaluationRejectAPIView.as_view(),
+        name="final-industry-evaluation-reject",
+    ),
+    path(
+        "reports/<int:report_id>/approve/",
+        AdvisorReportApproveAPIView.as_view(),
+        name="advisor-report-approve",
+    ),
+    path(
+        "students/evaluation-status/<int:internship_id>/",
+        StudentEvaluationStatusAPIView.as_view(),
+        name="student-evaluation-status",
+    ),
+    path(
+        "coordinator/overall-evaluation/<int:internship_id>/approve/",
+        CoordinatorOverallApprovalAPIView.as_view(),
+        name="coordinator-overall-approval",
+    ),
+    path(
+        "overall-evaluation/<int:internship_id>/",
+        OverallEvaluationDetailAPIView.as_view(),
+        name="overall-evaluation-detail",
+    ),
+    path(
+        "students/internship-results/<int:internship_id>/",
+        StudentInternshipResultsAPIView.as_view(),
+        name="student-internship-results",
+    ),
 ]

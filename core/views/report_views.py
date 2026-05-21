@@ -12,9 +12,11 @@ from core.models import (
     DailyLogEntry,
     Report,
     ReportFile,
+    ReportReviewStatus,
     Student,
-    AdvisorAssignment
+    AdvisorAssignment,
 )
+from core.services.evaluation_workflow import advisor_internship_queryset
 from core.serializers.report_serializers import (
     WeeklyLogbookSerializer,
     DailyLogEntrySerializer,
@@ -190,9 +192,9 @@ class SubmitFinalReportAPIView(APIView):
         if serializer.is_valid():
             report = serializer.save(
                 internship=internship,
-                report_type='FINAL',
-                status='SUBMITTED',
-                submission_date=timezone.now
+                report_type="FINAL",
+                status=ReportReviewStatus.SUBMITTED,
+                submission_date=timezone.now(),
             )
             return Response({
                 "message": "Final report submitted successfully",
@@ -262,33 +264,31 @@ class SubmitFinalReportAPIView(APIView):
 class AdvisorFinalReportListAPIView(APIView):
     """
     API endpoint for advisors to view FINAL internship reports
-    submitted by students assigned to them.
+    submitted by students assigned to them (includes examiner status and comments).
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # Check if user has Advisor role
-        if not hasattr(request.user, 'role') or request.user.role.role_name != 'Advisor':
+        if not hasattr(request.user, "role") or request.user.role.role_name != "ADVISOR":
             return Response(
                 {"error": "Only advisors can access this endpoint."},
-                status=status.HTTP_403_FORBIDDEN
+                status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Get internships assigned to this advisor
-        assigned_internships = AdvisorAssignment.objects.filter(
-            advisor=request.user
-        ).values_list('internship', flat=True)
-
-        # Get FINAL reports for those internships
-        reports = Report.objects.filter(
-            report_type='FINAL',
-            internship__in=assigned_internships
-        ).select_related(
-            'internship__student__user',
-            'internship__position__company'
-        ).prefetch_related(
-            'files'
-        ).order_by('-submission_date')
+        internship_ids = advisor_internship_queryset(request.user).values_list(
+            "pk", flat=True
+        )
+        reports = (
+            Report.objects.filter(report_type="FINAL", internship_id__in=internship_ids)
+            .select_related(
+                "internship__student__user",
+                "internship__position__company",
+                "examiner_reviewer",
+                "advisor_comment_by",
+            )
+            .prefetch_related("files")
+            .order_by("-submission_date")
+        )
 
         serializer = AdvisorFinalReportListSerializer(reports, many=True)
         return Response(serializer.data)
