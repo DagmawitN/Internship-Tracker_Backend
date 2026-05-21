@@ -3,7 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
-from core.models import UserRole
+from core.models import UserRole,Advisor
 from core.permissions import IsAdminUser,IsCoordinatorUser,IsStudentUser
 from core.serializers.user_serializers import AssignRoleSerializer
 from rest_framework import generics
@@ -65,6 +65,17 @@ class UserViewSet(viewsets.GenericViewSet):
         user.role = role
         user.save()
 
+        coordinator = request.user.coordinator_profile
+        advisor = None
+
+        if role.role_name == "ADVISOR":
+            advisor,created = Advisor.objects.get_or_create(
+                user=user,
+                defaults={
+                    "department": coordinator.department
+                }
+            )
+
         return Response(
             {
                 "message": f"User '{user.username}' assigned as '{role.role_name}'",
@@ -72,6 +83,7 @@ class UserViewSet(viewsets.GenericViewSet):
                 "username": user.username,
                 "email": user.email,
                 "role": role.role_name,
+                "advisor_id": advisor.id if advisor else None,
             },
             status=status.HTTP_200_OK,
         )

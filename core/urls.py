@@ -33,11 +33,44 @@ from core.views.company_views import (
     VerifiedCompaniesListView,
 )
 from core.views.coordinator_views import DepartmentReviewView
+from core.views.dashboard_views import (
+    AdminDashboardView,
+    AdvisorDashboardView,
+    CompanyPerformanceView,
+    CoordinatorDashboardView,
+    DepartmentStatisticsView,
+    MentorDashboardView,
+    PlacementAnalyticsView,
+    StudentDashboardView,
+)
 from core.views.department_views import DepartmentViewSet
-from core.views.internship_views import *
+from core.views.evaluation_views import (
+    AdvisorEvaluationDetailAPIView,
+    AdvisorEvaluationListCreateAPIView,
+    FinalIndustryEvaluationDetailAPIView,
+    FinalIndustryEvaluationListCreateAPIView,
+)
+from core.views.internship_views import (
+    AvailableInternshipPositionListView,
+    CancelInternshipView,
+    CompleteInternshipView,
+    InternshipApplicationCreateView,
+    InternshipListCreateView,
+    InternshipNotesView,
+    InternshipRecordListView,
+    InternshipRetrieveUpdateView,
+    StartInternshipsByPositionView,
+)
+from core.views.notification_views import (
+    MarkAllNotificationsReadView,
+    MarkNotificationReadView,
+    NotificationListView,
+)
 from core.views.profile_views import MeView
 from core.views.report_views import (
     AddDailyLogEntryAPIView,
+    AdvisorFinalReportListAPIView,
+    AdvisorWeeklyLogbookListAPIView,
     CreateWeeklyLogbookAPIView,
     SubmitFinalReportAPIView,
 )
@@ -159,7 +192,13 @@ urlpatterns = [
         CompanyApplicantActionView.as_view(),
         name="company-applicant-action",
     ),
-    # ------------------------------------------------------------------ Internship positions
+    # ------------------------------------------------------------------ Internship records (execution entities – search/filter)
+    path(
+        "internship-records/",
+        InternshipRecordListView.as_view(),
+        name="internship-records",
+    ),
+    # ------------------------------------------------------------------ Internship positions & lifecycle
     path(
         "internship-positions/",
         AvailableInternshipPositionListView.as_view(),
@@ -206,21 +245,26 @@ urlpatterns = [
         name="advisor-internship-notes",
     ),
     # ------------------------------------------------------------------ Application review workflow
+    # Step 1 – Mentor reviews (no coordinator gate required)
     path(
         "applications/<int:pk>/mentor-review/",
         MentorReviewView.as_view(),
         name="mentor-review",
     ),
+    # Step 2 – Coordinator assigns advisor via /students/{pk}/assign-advisor/
+    # Step 3 – Advisor reviews
     path(
         "applications/<int:pk>/advisor-review/",
         AdvisorReviewView.as_view(),
         name="advisor-review",
     ),
+    # Step 4 – Student accepts offer (requires advisor approval)
     path(
         "applications/<int:pk>/accept-offer/",
         AcceptOfferView.as_view(),
         name="accept-offer",
     ),
+    # Legacy coordinator dept-review (kept for backward compat)
     path(
         "applications/<int:pk>/dept-review/",
         DepartmentReviewView.as_view(),
