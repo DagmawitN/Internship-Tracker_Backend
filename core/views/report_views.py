@@ -189,9 +189,6 @@ class SubmitFinalReportAPIView(APIView):
             report = serializer.save(
                 internship=internship,
                 report_type="FINAL",
-                status="SUBMITTED",
-                submission_date=timezone.now,
-                report_type="FINAL",
                 status=ReportReviewStatus.SUBMITTED,
                 submission_date=timezone.now(),
             )
@@ -281,15 +278,9 @@ class AdvisorFinalReportListAPIView(APIView):
 
     def get(self, request):
         # Check if user has Advisor role
-        if (
-            not hasattr(request.user, "role")
-            or not request.user.role
-            or request.user.role.role_name != "ADVISOR"
-        ):
         if not hasattr(request.user, "role") or request.user.role.role_name != "ADVISOR":
             return Response(
                 {"error": "Only advisors can access this endpoint."},
-                status=status.HTTP_403_FORBIDDEN,
                 status=status.HTTP_403_FORBIDDEN,
             )
 

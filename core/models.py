@@ -622,7 +622,6 @@ class AdvisorEvaluation(TimeStampedModel):
         InternshipApplication,
         on_delete=models.CASCADE,
         related_name="advisor_evaluation",
-        related_name="advisor_evaluation",
     )
     advisor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -1100,14 +1099,12 @@ class FinalIndustryEvaluation(TimeStampedModel):
         Internship,
         on_delete=models.CASCADE,
         related_name="final_industry_evaluation",
-        related_name="final_industry_evaluation",
     )
     company_mentor = models.ForeignKey(
         CompanyMentor,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="final_evaluations",
         related_name="final_evaluations",
     )
     submitted_at = models.DateTimeField(auto_now_add=True)
