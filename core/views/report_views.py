@@ -13,9 +13,12 @@ from core.models import (
     InternshipApplication,
     Report,
     ReportFile,
+    ReportReviewStatus,
     Student,
     WeeklyLogbook,
+    AdvisorAssignment,
 )
+from core.services.evaluation_workflow import advisor_internship_queryset
 from core.serializers.report_serializers import (
     AdvisorFinalReportListSerializer,
     AdvisorWeeklyLogbookSerializer,
@@ -187,17 +190,10 @@ class SubmitFinalReportAPIView(APIView):
                 internship=internship,
                 report_type="FINAL",
                 status="SUBMITTED",
+                submission_date=timezone.now,
+                report_type="FINAL",
+                status=ReportReviewStatus.SUBMITTED,
                 submission_date=timezone.now(),
-            )
-
-            from core.services.audit_service import log_audit_event
-
-            log_audit_event(
-                actor=request.user,
-                action="REPORT_SUBMITTED",
-                target_type="Report",
-                target_id=report.id,
-                description=f"Final report submitted by student {student.id}.",
             )
 
             # Notify advisor that a report has been submitted
@@ -278,7 +274,7 @@ class SubmitFinalReportAPIView(APIView):
 class AdvisorFinalReportListAPIView(APIView):
     """
     API endpoint for advisors to view FINAL internship reports
-    submitted by students assigned to them.
+    submitted by students assigned to them (includes examiner status and comments).
     """
 
     permission_classes = [IsAuthenticated]
@@ -290,8 +286,10 @@ class AdvisorFinalReportListAPIView(APIView):
             or not request.user.role
             or request.user.role.role_name != "ADVISOR"
         ):
+        if not hasattr(request.user, "role") or request.user.role.role_name != "ADVISOR":
             return Response(
                 {"error": "Only advisors can access this endpoint."},
+                status=status.HTTP_403_FORBIDDEN,
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -307,6 +305,20 @@ class AdvisorFinalReportListAPIView(APIView):
             )
             .select_related(
                 "internship__student__user", "internship__position__company"
+            )
+            .prefetch_related("files")
+            .order_by("-submission_date")
+        )
+        internship_ids = advisor_internship_queryset(request.user).values_list(
+            "pk", flat=True
+        )
+        reports = (
+            Report.objects.filter(report_type="FINAL", internship_id__in=internship_ids)
+            .select_related(
+                "internship__student__user",
+                "internship__position__company",
+                "examiner_reviewer",
+                "advisor_comment_by",
             )
             .prefetch_related("files")
             .order_by("-submission_date")
