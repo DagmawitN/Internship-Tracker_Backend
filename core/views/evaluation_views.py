@@ -112,6 +112,17 @@ class FinalIndustryEvaluationListCreateAPIView(generics.ListCreateAPIView):
             status=CompanyEvaluationStatus.SUBMITTED,
         )
 
+        from core.services.audit_service import log_audit_event
+
+        evaluation = serializer.instance
+        log_audit_event(
+            actor=self.request.user,
+            action="EVALUATION_CREATED",
+            target_type="FinalIndustryEvaluation",
+            target_id=evaluation.id,
+            description=f"Final industry evaluation created for internship {internship.id}.",
+        )
+
 
 class FinalIndustryEvaluationDetailAPIView(generics.RetrieveAPIView):
     permission_classes = [IsAuthenticated]

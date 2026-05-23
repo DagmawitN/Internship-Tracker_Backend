@@ -7,6 +7,7 @@ from core.views.advisor_views import (
     AdvisorListView,
     AdvisorReviewView,
     AssignAdvisorView,
+    AssignExaminerView,
 )
 from core.views.attendance_views import (
     AttendanceDetailView,
@@ -50,6 +51,12 @@ from core.views.evaluation_views import (
     FinalIndustryEvaluationDetailAPIView,
     FinalIndustryEvaluationListCreateAPIView,
 )
+from core.views.export_views import (
+    ExportMyAttendanceView,
+    ExportMyEvaluationsView,
+    ExportMyInternshipsView,
+    ExportMyReportsView,
+)
 from core.views.internship_views import (
     AvailableInternshipPositionListView,
     CancelInternshipView,
@@ -60,6 +67,7 @@ from core.views.internship_views import (
     InternshipRecordListView,
     InternshipRetrieveUpdateView,
     StartInternshipsByPositionView,
+    StudentApplicationsListView,
 )
 from core.views.notification_views import (
     MarkAllNotificationsReadView,
@@ -73,6 +81,12 @@ from core.views.report_views import (
     AdvisorWeeklyLogbookListAPIView,
     CreateWeeklyLogbookAPIView,
     SubmitFinalReportAPIView,
+)
+from core.views.resume_views import (
+    StaffStudentResumeDownloadView,
+    StaffStudentResumeView,
+    StudentResumeDownloadView,
+    StudentResumeView,
 )
 from core.views.student_views import AcceptOfferView
 from core.views.user_views import StudentsList, UsersList, UserViewSet
@@ -139,6 +153,28 @@ urlpatterns = [
     path("register/staff/", StaffRegisterView.as_view(), name="staff-register"),
     # ------------------------------------------------------------------ Profile
     path("me/", MeView.as_view(), name="me"),
+    # ------------------------------------------------------------------ Resume (own)
+    path(
+        "students/me/resume/",
+        StudentResumeView.as_view(),
+        name="student-resume",
+    ),
+    path(
+        "students/me/resume/download/",
+        StudentResumeDownloadView.as_view(),
+        name="student-resume-download",
+    ),
+    # ------------------------------------------------------------------ Resume (authorized staff view)
+    path(
+        "students/<int:pk>/resume/",
+        StaffStudentResumeView.as_view(),
+        name="staff-student-resume",
+    ),
+    path(
+        "students/<int:pk>/resume/download/",
+        StaffStudentResumeDownloadView.as_view(),
+        name="staff-student-resume-download",
+    ),
     # ------------------------------------------------------------------ Users / students
     path("students/", StudentsList.as_view(), name="student-list"),
     path("users/", UsersList.as_view(), name="users-list"),
@@ -244,6 +280,12 @@ urlpatterns = [
         AdvisorInternshipNotesView.as_view(),
         name="advisor-internship-notes",
     ),
+    # ------------------------------------------------------------------ Student application list
+    path(
+        "applications/my/",
+        StudentApplicationsListView.as_view(),
+        name="my-applications",
+    ),
     # ------------------------------------------------------------------ Application review workflow
     # Step 1 – Mentor reviews (no coordinator gate required)
     path(
@@ -276,6 +318,11 @@ urlpatterns = [
         "students/<int:pk>/assign-advisor/",
         AssignAdvisorView.as_view(),
         name="assign-advisor",
+    ),
+    path(
+        "students/<int:pk>/assign-examiner/",
+        AssignExaminerView.as_view(),
+        name="assign-examiner",
     ),
     # ------------------------------------------------------------------ Attendance
     path("attendance/check-in/", CheckInView.as_view(), name="attendance-check-in"),
@@ -356,9 +403,43 @@ urlpatterns = [
         ExaminerFinalReportRejectAPIView.as_view(),
         name="examiner-final-report-reject",
     ),
-    path("advisor/logbooks/", AdvisorWeeklyLogbookListAPIView.as_view(), name="advisor-weekly-logbooks"),
-    path("evaluations/final-industry/", FinalIndustryEvaluationListCreateAPIView.as_view(), name="final-industry-evaluations-list"),
-    path("evaluations/final-industry/<int:id>/", FinalIndustryEvaluationDetailAPIView.as_view(), name="final-industry-evaluation-detail"),
+    path(
+        "analytics/departments/",
+        DepartmentStatisticsView.as_view(),
+        name="analytics-departments",
+    ),
+    # ------------------------------------------------------------------ Exports
+    path(
+        "exports/my/internships/",
+        ExportMyInternshipsView.as_view(),
+        name="export-my-internships",
+    ),
+    path(
+        "exports/my/reports/",
+        ExportMyReportsView.as_view(),
+        name="export-my-reports",
+    ),
+    path(
+        "exports/my/evaluations/",
+        ExportMyEvaluationsView.as_view(),
+        name="export-my-evaluations",
+    ),
+    path(
+        "exports/my/attendance/",
+        ExportMyAttendanceView.as_view(),
+        name="export-my-attendance",
+    ),
+    # ------------------------------------------------------------------ Evaluations
+    path(
+        "evaluations/final-industry/",
+        FinalIndustryEvaluationListCreateAPIView.as_view(),
+        name="final-industry-evaluations-list",
+    ),
+    path(
+        "evaluations/final-industry/<int:id>/",
+        FinalIndustryEvaluationDetailAPIView.as_view(),
+        name="final-industry-evaluation-detail",
+    ),
     path(
         "evaluations/advisor/",
         AdvisorEvaluationListCreateAPIView.as_view(),
