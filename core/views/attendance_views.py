@@ -4,12 +4,15 @@ from decimal import Decimal
 
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.filters.attendance_filters import AttendanceFilter
 from core.models import Attendance, CompanyMentor, Internship
 from core.permissions import IsStudentUser
 from core.serializers.attendance_serializer import (
@@ -109,28 +112,16 @@ class CheckInView(APIView):
         now = timezone.localtime()
         check_in_time = now.time()
 
-        # 4. GPS / location verification
+        # 4. GPS / location verification (delegated to service)
         latitude = data.get("latitude")
         longitude = data.get("longitude")
         accuracy = data.get("accuracy")
-        is_location_verified = False
 
-        if position.is_remote:
-            is_location_verified = True
-        elif latitude is not None and longitude is not None:
-            gps_accurate = accuracy is not None and accuracy <= 50
-            has_work_location = (
-                position.work_latitude is not None
-                and position.work_longitude is not None
-            )
-            if gps_accurate and has_work_location:
-                distance = haversine_distance(
-                    latitude,
-                    longitude,
-                    position.work_latitude,
-                    position.work_longitude,
-                )
-                is_location_verified = distance <= position.allowed_radius_meters
+        from core.services.attendance_service import validate_location_for_checkin
+
+        is_location_verified = validate_location_for_checkin(
+            position, latitude, longitude, accuracy
+        )
 
         # 5. Late detection
         attendance_status = Attendance.Status.PRESENT
@@ -151,6 +142,16 @@ class CheckInView(APIView):
             longitude=longitude,
             accuracy=accuracy,
             is_location_verified=is_location_verified,
+        )
+
+        from core.services.audit_service import log_audit_event
+
+        log_audit_event(
+            actor=request.user,
+            action="ATTENDANCE_CHECK_IN",
+            target_type="Attendance",
+            target_id=attendance.id,
+            description=f"Check-in for internship {internship.id} on {today}.",
         )
 
         return Response(
@@ -209,6 +210,16 @@ class CheckOutView(APIView):
         attendance.total_hours = max(hours, Decimal("0"))
         attendance.save(update_fields=["check_out_time", "total_hours"])
 
+        from core.services.audit_service import log_audit_event
+
+        log_audit_event(
+            actor=request.user,
+            action="ATTENDANCE_CHECK_OUT",
+            target_type="Attendance",
+            target_id=attendance.id,
+            description=f"Check-out for internship {internship.id} on {today}. Hours: {attendance.total_hours}.",
+        )
+
         return Response(
             {
                 "message": "Checked out successfully.",
@@ -226,13 +237,36 @@ class CheckOutView(APIView):
 
 
 class AttendanceListView(generics.ListAPIView):
+    """
+    GET /attendance/
+
+    Role-based queryset (via get_queryset) + filter/search/ordering on top.
+
+    Filters   : ?status=LATE  ?date=2026-05-01  ?start_date=  ?end_date=
+                ?internship=4  ?student=Dagim  ?company=5  ?department=2
+                ?is_location_verified=true
+    Search    : ?search=<text>  (student name, company, position title)
+    Ordering  : ?ordering=date | -date | status | total_hours
+    """
+
     serializer_class = AttendanceSerializer
     permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = AttendanceFilter
+    search_fields = [
+        "internship__student__user__first_name",
+        "internship__student__user__last_name",
+        "internship__student__student_id",
+        "internship__company__company_name",
+        "internship__position__title",
+    ]
+    ordering_fields = ["date", "status", "total_hours", "created_at"]
+    ordering = ["-date"]
 
     def get_queryset(self):
-        return _attendance_queryset_for_user(self.request.user).order_by(
-            "-date", "-created_at"
-        )
+        if getattr(self, "swagger_fake_view", False):
+            return Attendance.objects.none()
+        return _attendance_queryset_for_user(self.request.user)
 
 
 class AttendanceDetailView(generics.RetrieveAPIView):

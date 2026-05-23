@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import generics, permissions, status
+from rest_framework import generics, permissions, serializers, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
@@ -16,8 +16,6 @@ from core.serializers.company_serializer import (
 )
 
 User = get_user_model()
-
-from rest_framework import serializers
 
 
 class ActionSerializer(serializers.Serializer):
@@ -84,26 +82,32 @@ class CompanyApplicantActionView(APIView):
         if application.dept_status != "APPROVED":
             raise ValidationError("Application not approved by department.")
 
+        from core.services.application_service import process_mentor_review
+
         action = request.data.get("action", "").lower()
-        if action not in ["accept", "reject"]:
+        signature = request.data.get("signature", "")
+        rejection_reason = request.data.get("rejection_reason", "")
+
+        if action not in ("accept", "reject"):
             raise ValidationError('Action must be "accept" or "reject".')
 
-        if application.mentor_status not in [None, "PENDING"]:
-            raise ValidationError("Already reviewed by mentor.")
-
-        if action == "accept":
-            application.mentor_status = "ACCEPTED"
-            application.mentor = mentor
-        else:
-            application.mentor_status = "REJECTED"
-
-        application.save()
+        try:
+            process_mentor_review(
+                application=application,
+                actor=request.user,
+                action=action,
+                signature=signature,
+                rejection_reason=rejection_reason,
+            )
+        except ValueError as exc:
+            raise ValidationError(str(exc))
 
         return Response(
             {
-                "message": "Mentor decision recorded",
+                "message": "Mentor decision recorded.",
                 "application_id": application.id,
                 "mentor_status": application.mentor_status,
+                "rejection_reason": application.rejection_reason or None,
             },
             status=status.HTTP_200_OK,
         )
@@ -130,26 +134,40 @@ class MentorReviewView(APIView):
         mentor = CompanyMentor.objects.filter(user=request.user).first()
         if not mentor:
             raise PermissionDenied("Only company mentors can review applications.")
+        print(mentor.company)
+        print(application.position.company)
+        print(mentor.company_id)
 
         # Ensure mentor belongs to the company
         if application.position.company != mentor.company:
             raise PermissionDenied("Not your company")
 
-        if application.mentor_status not in [None, "PENDING"]:
-            raise ValidationError("Already reviewed by mentor")
+        from core.services.application_service import process_mentor_review
 
-        action = request.data.get("action")
+        action = request.data.get("action", "").lower()
+        signature = request.data.get("signature", "")
+        rejection_reason = request.data.get("rejection_reason", "")
 
-        if action == "accept":
-            application.mentor_status = "ACCEPTED"
-            application.mentor = mentor
+        if action not in ("accept", "reject"):
+            raise ValidationError('Action must be "accept" or "reject".')
 
-        elif action == "reject":
-            application.mentor_status = "REJECTED"
+        try:
+            process_mentor_review(
+                application=application,
+                actor=request.user,
+                action=action,
+                signature=signature,
+                rejection_reason=rejection_reason,
+            )
+        except ValueError as exc:
+            raise ValidationError(str(exc))
 
-        else:
-            raise ValidationError("Invalid action")
-
-        application.save()
-
-        return Response({"message": "Mentor decision recorded"}, status=200)
+        return Response(
+            {
+                "message": "Mentor decision recorded.",
+                "application_id": application.id,
+                "mentor_status": application.mentor_status,
+                "rejection_reason": application.rejection_reason or None,
+            },
+            status=status.HTTP_200_OK,
+        )

@@ -1,11 +1,42 @@
 from rest_framework import serializers
-from core.models import FinalIndustryEvaluation, CompanyMentor, AdvisorEvaluation
+
+from core.evaluation_constants import ADVISOR_SCORE_FIELDS
+from core.evaluation_validators import (
+    validate_advisor_assignment,
+    validate_advisor_score_fields,
+    validate_internship_prerequisites_for_advisor_eval,
+)
+from core.models import (
+    AdvisorEvaluation,
+    CompanyMentor,
+    ExaminerEvaluation,
+    FinalIndustryEvaluation,
+    Internship,
+    InternshipApplication,
+    MonthlyIndustryEvaluation,
+    OverallInternshipEvaluation,
+)
+
+
+class ScoreValidationMixin:
+    """Mixin for per-field score validation against configured maxima."""
+
+    score_field_limits = {}
+
+    def _validate_bounded_score(self, value, field_name):
+        max_score = self.score_field_limits.get(field_name)
+        if max_score is None:
+            return value
+        if value < 0:
+            raise serializers.ValidationError(f"{field_name} cannot be negative.")
+        if value > max_score:
+            raise serializers.ValidationError(
+                f"{field_name} cannot exceed {max_score}."
+            )
+        return value
+
 
 class FinalIndustryEvaluationSerializer(serializers.ModelSerializer):
-    """
-    Serializer for Final Industry Evaluation submitted by company supervisors.
-    Automatically calculates section totals and overall student performance.
-    """
     student_full_name = serializers.SerializerMethodField()
     student_id = serializers.SerializerMethodField()
     company_name = serializers.SerializerMethodField()
@@ -14,51 +45,56 @@ class FinalIndustryEvaluationSerializer(serializers.ModelSerializer):
     class Meta:
         model = FinalIndustryEvaluation
         fields = [
-            'id',
-            'internship',
-            'student_full_name',
-            'student_id',
-            'company_name',
-            'evaluator_name',
-            'submitted_at',
-            # Section A
-            'knowledge_about_task',
-            'problem_solving',
-            'quality_of_work',
-            'punctuality_in_production',
-            'initiative',
-            'section_a_total',
-            # Section B
-            'dedication',
-            'cooperation',
-            'discipline',
-            'responsibility',
-            'socialization',
-            'communication',
-            'decision_making',
-            'section_b_total',
-            # Section C
-            'student_potential',
-            'overall_comments',
-            'would_offer_job',
-            # Calculated
-            'total_mark',
-            'overall_student_performance',
+            "id",
+            "internship",
+            "student_full_name",
+            "student_id",
+            "company_name",
+            "evaluator_name",
+            "submitted_at",
+            "status",
+            "advisor_reviewer",
+            "advisor_approved_at",
+            "advisor_rejected_at",
+            "visible_to_student",
+            "knowledge_about_task",
+            "problem_solving",
+            "quality_of_work",
+            "punctuality_in_production",
+            "initiative",
+            "section_a_total",
+            "dedication",
+            "cooperation",
+            "discipline",
+            "responsibility",
+            "socialization",
+            "communication",
+            "decision_making",
+            "section_b_total",
+            "student_potential",
+            "overall_comments",
+            "would_offer_job",
+            "total_mark",
+            "overall_student_performance",
         ]
         read_only_fields = [
-            'id',
-            'submitted_at',
-            'section_a_total',
-            'section_b_total',
-            'total_mark',
-            'overall_student_performance',
+            "id",
+            "submitted_at",
+            "status",
+            "advisor_reviewer",
+            "advisor_approved_at",
+            "advisor_rejected_at",
+            "visible_to_student",
+            "section_a_total",
+            "section_b_total",
+            "total_mark",
+            "overall_student_performance",
         ]
 
     def validate_score(self, value, field_name):
-        """Validate individual scores are between 1-5."""
-        if not (1 <= value <= 5):
+        if not (0 <= value <= 5):
             raise serializers.ValidationError(
-                f"{field_name} must be between 1 and 5."
+                f"{field_name} must be between 0 and 5."
             )
         return value
 
@@ -99,46 +135,46 @@ class FinalIndustryEvaluationSerializer(serializers.ModelSerializer):
         return self.validate_score(value, "decision_making")
 
     def validate_internship(self, value):
-        """Validate internship exists and is completed."""
-        if value.status != 'COMPLETED':
+        active = Internship.objects.filter(
+            student=value.student,
+            position=value.position,
+            status="COMPLETED",
+        ).exists()
+        if not active:
             raise serializers.ValidationError(
                 "Internship must be completed to submit evaluation."
             )
         return value
 
     def validate(self, data):
-        internship = data.get('internship')
-        request = self.context.get('request')
-
+        internship = data.get("internship") or (
+            self.instance.internship if self.instance else None
+        )
         if internship is None:
             return data
 
-        existing_evaluations = FinalIndustryEvaluation.objects.filter(internship=internship)
-        if self.instance is not None:
-            existing_evaluations = existing_evaluations.exclude(pk=self.instance.pk)
-
-        if existing_evaluations.exists():
+        qs = FinalIndustryEvaluation.objects.filter(internship=internship)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
             raise serializers.ValidationError(
                 "Final evaluation for this internship already exists."
             )
 
-        if request is not None:
-            user = getattr(request, 'user', None)
-            if user is not None and user.is_authenticated:
-                company_mentor = CompanyMentor.objects.filter(
-                    user=user,
-                    id=internship.mentor_id,
-                ).first()
-                if company_mentor is None:
-                    raise serializers.ValidationError(
-                        "Only the company mentor assigned to this internship can submit the evaluation."
-                    )
-
+        request = self.context.get("request")
+        if request and request.user.is_authenticated:
+            company_mentor = CompanyMentor.objects.filter(
+                user=request.user,
+                id=internship.mentor_id,
+            ).first()
+            if company_mentor is None:
+                raise serializers.ValidationError(
+                    "Only the company mentor assigned to this internship can submit."
+                )
         return data
 
     def get_student_full_name(self, obj):
-        student = obj.internship.student
-        user = student.user
+        user = obj.internship.student.user
         return f"{user.first_name} {user.last_name}".strip() or user.username
 
     def get_student_id(self, obj):
@@ -149,116 +185,117 @@ class FinalIndustryEvaluationSerializer(serializers.ModelSerializer):
 
     def get_evaluator_name(self, obj):
         if obj.company_mentor:
-            return obj.company_mentor.user.get_full_name() or obj.company_mentor.user.username
+            u = obj.company_mentor.user
+            return u.get_full_name() or u.username
         return "Unknown"
 
 
-class AdvisorEvaluationSerializer(serializers.ModelSerializer):
-    """
-    Serializer for Advisor Evaluation submitted by university advisors.
-    Automatically calculates total and weighted scores.
-    """
+class AdvisorEvaluationSerializer(ScoreValidationMixin, serializers.ModelSerializer):
+    score_field_limits = ADVISOR_SCORE_FIELDS
     student_full_name = serializers.SerializerMethodField()
     student_id = serializers.SerializerMethodField()
     advisor_name = serializers.SerializerMethodField()
-    internship_id = serializers.SerializerMethodField()
+    internship_id = serializers.IntegerField(source="internship.id", read_only=True)
     company_name = serializers.SerializerMethodField()
+    workflow_status = serializers.SerializerMethodField()
 
     class Meta:
         model = AdvisorEvaluation
         fields = [
-            'id',
-            'internship',
-            'internship_id',
-            'student_full_name',
-            'student_id',
-            'company_name',
-            'advisor_name',
-            'submitted_at',
-            # Evaluation Scores
-            'technical_followup_score',
-            'communication_score',
-            'attendance_followup_score',
-            'professionalism_score',
-            'report_quality_score',
-            'comments',
-            # Calculated Scores
-            'total_score',
-            'weighted_score',
+            "id",
+            "internship",
+            "internship_id",
+            "student_full_name",
+            "student_id",
+            "company_name",
+            "advisor",
+            "advisor_name",
+            "submitted_at",
+            "approved_at",
+            "status",
+            "report_format_score",
+            "organization_background_score",
+            "activities_score",
+            "data_figure_table_score",
+            "report_content_score",
+            "recommendation_score",
+            "conclusion_score",
+            "report_total",
+            "weighted_report_mark",
+            "pictures_and_data_score",
+            "weekly_summary_score",
+            "daily_detail_score",
+            "improvement_score",
+            "initiative_score",
+            "logbook_total",
+            "weighted_logbook_mark",
+            "understanding_objective_score",
+            "engagement_score",
+            "discipline_score",
+            "student_performance_total",
+            "weighted_student_performance_mark",
+            "total_marks",
+            "final_weighted_mark",
+            "workflow_status",
         ]
         read_only_fields = [
-            'id',
-            'submitted_at',
-            'total_score',
-            'weighted_score',
+            "id",
+            "advisor",
+            "submitted_at",
+            "approved_at",
+            "status",
+            "report_total",
+            "weighted_report_mark",
+            "logbook_total",
+            "weighted_logbook_mark",
+            "student_performance_total",
+            "weighted_student_performance_mark",
+            "total_marks",
+            "final_weighted_mark",
+            "workflow_status",
         ]
 
-    def validate_score(self, value, field_name):
-        """Validate individual scores are between 1-5."""
-        if not (1 <= value <= 5):
-            raise serializers.ValidationError(
-                f"{field_name} must be between 1 and 5."
-            )
-        return value
-
-    def validate_technical_followup_score(self, value):
-        return self.validate_score(value, "technical_followup_score")
-
-    def validate_communication_score(self, value):
-        return self.validate_score(value, "communication_score")
-
-    def validate_attendance_followup_score(self, value):
-        return self.validate_score(value, "attendance_followup_score")
-
-    def validate_professionalism_score(self, value):
-        return self.validate_score(value, "professionalism_score")
-
-    def validate_report_quality_score(self, value):
-        return self.validate_score(value, "report_quality_score")
-
     def validate_internship(self, value):
-        """Validate internship exists."""
         if value is None:
             raise serializers.ValidationError("Internship is required.")
         return value
 
     def validate(self, data):
-        """Validate no existing evaluation and advisor authorization."""
-        internship = data.get('internship')
-        request = self.context.get('request')
-
+        internship = data.get("internship") or (
+            self.instance.internship if self.instance else None
+        )
         if internship is None:
             return data
 
-        # Check for existing evaluation
-        existing_evaluations = AdvisorEvaluation.objects.filter(internship=internship)
-        if self.instance is not None:
-            existing_evaluations = existing_evaluations.exclude(pk=self.instance.pk)
-
-        if existing_evaluations.exists():
+        qs = AdvisorEvaluation.objects.filter(internship=internship)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
             raise serializers.ValidationError(
                 "Advisor evaluation for this internship already exists."
             )
 
-        # Validate advisor is assigned to this internship
-        if request is not None:
-            user = getattr(request, 'user', None)
-            if user is not None and user.is_authenticated:
-                from core.models import AdvisorAssignment
-                is_assigned = AdvisorAssignment.objects.filter(
-                    internship=internship,
-                    advisor=user,
-                ).exists()
-                if not is_assigned:
-                    raise serializers.ValidationError(
-                        "Only the advisor assigned to this internship can submit the evaluation."
-                    )
+        request = self.context.get("request")
+        if request and request.user.is_authenticated and self.instance is None:
+            validate_advisor_assignment(request.user, internship)
 
+        # Validate all score fields on create/update
+        merged = {}
+        if self.instance:
+            for field in ADVISOR_SCORE_FIELDS:
+                merged[field] = getattr(self.instance, field)
+        merged.update(data)
+        class _Stub:
+            pass
+
+        stub = _Stub()
+        for field in ADVISOR_SCORE_FIELDS:
+            setattr(stub, field, merged.get(field, 0))
+        validate_advisor_score_fields(stub)
         return data
 
     def get_student_full_name(self, obj):
-        student = obj.internship.student
-        user = student.user
+        user = obj.internship.student.user
         return f"{user.first_name} {user.last_name}".strip() or user.username
 
     def get_student_id(self, obj):
@@ -269,9 +306,196 @@ class AdvisorEvaluationSerializer(serializers.ModelSerializer):
             return obj.advisor.get_full_name() or obj.advisor.username
         return "Unknown"
 
-    def get_internship_id(self, obj):
-        return obj.internship.id
+    def get_company_name(self, obj):
+        return obj.internship.position.company.company_name
+
+    def get_workflow_status(self, obj):
+        overall = getattr(obj.internship, "overall_evaluation", None)
+        return overall.status if overall else "PENDING_ADVISOR"
+
+
+class MonthlyIndustryEvaluationSerializer(serializers.ModelSerializer):
+    student_full_name = serializers.SerializerMethodField()
+    company_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MonthlyIndustryEvaluation
+        fields = [
+            "id",
+            "internship",
+            "month_number",
+            "student_full_name",
+            "company_name",
+            "submitted_at",
+            "status",
+            "advisor_reviewer",
+            "advisor_approved_at",
+            "advisor_rejected_at",
+            "visible_to_student",
+            "work_quality_score",
+            "punctuality_score",
+            "attitude_score",
+            "initiative_score",
+            "comments",
+            "total_score",
+        ]
+        read_only_fields = [
+            "id",
+            "submitted_at",
+            "status",
+            "advisor_reviewer",
+            "advisor_approved_at",
+            "advisor_rejected_at",
+            "visible_to_student",
+            "total_score",
+        ]
+
+    def validate(self, data):
+        for field in [
+            "work_quality_score",
+            "punctuality_score",
+            "attitude_score",
+            "initiative_score",
+        ]:
+            val = data.get(field)
+            if val is not None and not (0 <= val <= 5):
+                raise serializers.ValidationError({field: "Must be between 0 and 5."})
+        return data
+
+    def get_student_full_name(self, obj):
+        user = obj.internship.student.user
+        return f"{user.first_name} {user.last_name}".strip() or user.username
 
     def get_company_name(self, obj):
         return obj.internship.position.company.company_name
 
+
+class AdvisorApprovalSerializer(serializers.Serializer):
+    """Optional comment when approving or rejecting an advisor evaluation."""
+
+    comment = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+
+
+class AdvisorQueueSerializer(serializers.Serializer):
+    internship_id = serializers.IntegerField()
+    student = serializers.DictField()
+    company = serializers.CharField()
+    timestamps = serializers.DictField()
+    approval_stage = serializers.CharField()
+    workflow_status = serializers.CharField()
+    pending_logbooks_count = serializers.IntegerField()
+    monthly_evaluations_count = serializers.IntegerField()
+    monthly_reports_count = serializers.IntegerField(required=False)
+    pending_monthly_evaluations = serializers.IntegerField(required=False)
+    pending_documents = serializers.IntegerField(required=False)
+    pending_final_evaluation = serializers.IntegerField(required=False)
+    examiner_evaluations_submitted = serializers.IntegerField()
+    examiner_evaluations_required = serializers.IntegerField()
+    company_evaluation_submitted = serializers.BooleanField()
+    final_evaluation_status = serializers.CharField(allow_null=True, required=False)
+    advisor_evaluation_status = serializers.CharField(allow_null=True)
+    final_report_status = serializers.CharField(allow_null=True)
+    missing_requirements = serializers.ListField(child=serializers.CharField())
+    documents = serializers.DictField(required=False)
+    company_evaluations = serializers.DictField(required=False)
+    examiner_evaluations = serializers.DictField(required=False)
+    overall_evaluation = serializers.DictField(required=False)
+
+
+class ExaminerEvaluationSerializer(serializers.ModelSerializer):
+    student_full_name = serializers.SerializerMethodField()
+    weighted_score = serializers.DecimalField(
+        max_digits=5, decimal_places=3, read_only=True
+    )
+
+    class Meta:
+        model = ExaminerEvaluation
+        fields = [
+            "id",
+            "internship",
+            "student_full_name",
+            "examiner",
+            "submitted_at",
+            "technical_skills_score",
+            "communication_score",
+            "professionalism_score",
+            "report_quality_score",
+            "presentation_score",
+            "comments",
+            "total_score",
+            "weighted_score",
+        ]
+        read_only_fields = ["id", "examiner", "submitted_at", "total_score", "weighted_score"]
+
+    def validate(self, data):
+        for field in [
+            "technical_skills_score",
+            "communication_score",
+            "professionalism_score",
+            "report_quality_score",
+            "presentation_score",
+        ]:
+            val = data.get(field)
+            if val is not None and not (0 <= val <= 5):
+                raise serializers.ValidationError({field: "Must be between 0 and 5."})
+        return data
+
+    def get_student_full_name(self, obj):
+        user = obj.internship.student.user
+        return f"{user.first_name} {user.last_name}".strip() or user.username
+
+
+class OverallInternshipEvaluationSerializer(serializers.ModelSerializer):
+    student_full_name = serializers.SerializerMethodField()
+    can_finalize = serializers.SerializerMethodField()
+    missing_requirements = serializers.SerializerMethodField()
+    advisor_evaluation_detail = AdvisorEvaluationSerializer(
+        source="advisor_evaluation", read_only=True
+    )
+
+    class Meta:
+        model = OverallInternshipEvaluation
+        fields = [
+            "id",
+            "internship",
+            "student_full_name",
+            "status",
+            "advisor_approved",
+            "examiner_completed",
+            "coordinator_approved",
+            "visible_to_student",
+            "advisor_score",
+            "examiner_average_score",
+            "company_score",
+            "final_total_score",
+            "final_grade",
+            "advisor_approved_at",
+            "examiner_completed_at",
+            "coordinator_approved_at",
+            "coordinator_comment",
+            "can_finalize",
+            "missing_requirements",
+            "advisor_evaluation_detail",
+        ]
+        read_only_fields = fields
+
+    def get_student_full_name(self, obj):
+        user = obj.internship.student.user
+        return f"{user.first_name} {user.last_name}".strip() or user.username
+
+    def get_can_finalize(self, obj):
+        from core.services.evaluation_workflow import can_coordinator_finalize
+
+        ok, _ = can_coordinator_finalize(obj)
+        return ok
+
+    def get_missing_requirements(self, obj):
+        from core.services.evaluation_workflow import can_coordinator_finalize
+
+        _, missing = can_coordinator_finalize(obj)
+        return missing
+
+
+class CoordinatorOverallApprovalSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=["approve", "reject"])
+    comment = serializers.CharField(required=False, allow_blank=True)

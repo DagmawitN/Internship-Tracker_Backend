@@ -5,13 +5,20 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from core.models import Advisor, Internship, InternshipApplication, Student
+from core.models import (
+    Advisor,
+    AdvisorAssignment,
+    Internship,
+    InternshipApplication,
+    Student,
+)
 from core.permissions import IsAdvisorUser, IsCoordinatorUser
 from core.serializers.advisor_serializer import (
     AdvisorNotesSerializer,
     AdvisorReviewSerializer,
     AdvisorSerializer,
     AssignAdvisorSerializer,
+    AssignExaminerSerializer,
 )
 
 
@@ -85,12 +92,98 @@ class AssignAdvisorView(APIView):
             advisor__isnull=True,
         ).update(advisor=advisor, dept_status="APPROVED")
 
+        from core.services.audit_service import log_audit_event
+
+        log_audit_event(
+            actor=request.user,
+            action="ADVISOR_ASSIGNED",
+            target_type="Student",
+            target_id=student.id,
+            description=f"Advisor '{advisor.user.email}' assigned to student '{student.user.email}'.",
+        )
+
         return Response(
             {
                 "message": "Advisor assigned successfully.",
                 "student_id": student.id,
                 "advisor_id": advisor.id,
                 "applications_linked": updated,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class AssignExaminerView(APIView):
+    """POST /students/{pk}/assign-examiner/"""
+
+    permission_classes = [IsAuthenticated, IsCoordinatorUser]
+    serializer_class = AssignExaminerSerializer
+
+    def post(self, request, pk):
+        # pk = User pk of the student
+        student = get_object_or_404(Student, user__id=pk)
+
+        coordinator_staff = getattr(request.user, "staff", None)
+        if not coordinator_staff:
+            raise PermissionDenied("You are not a department coordinator.")
+
+        # Enforce same-department rule for student
+        if student.department != coordinator_staff.department:
+            raise PermissionDenied("This student is not in your department.")
+
+        serializer = AssignExaminerSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        examiner_id = serializer.validated_data["examiner_id"]
+
+        examiner_advisor = get_object_or_404(Advisor, pk=examiner_id)
+
+        # Enforce same-department rule for examiner
+        if examiner_advisor.department != coordinator_staff.department:
+            raise ValidationError("Examiner does not belong to your department.")
+
+        # Find accepted application for this student
+        application = InternshipApplication.objects.filter(
+            student=student,
+            student_decision="ACCEPTED",
+        ).first()
+
+        if not application:
+            raise ValidationError(
+                "No accepted internship application found for this student."
+            )
+
+        # Create or update AdvisorAssignment with EXAMINER role
+        assignment, created = AdvisorAssignment.objects.update_or_create(
+            internship=application,
+            role="EXAMINER",
+            defaults={
+                "advisor": examiner_advisor.user,
+                "coordinator": request.user,
+                "student": student.user,
+            },
+        )
+
+        from core.services.audit_service import log_audit_event
+
+        log_audit_event(
+            actor=request.user,
+            action="EXAMINER_ASSIGNED",
+            target_type="Student",
+            target_id=student.id,
+            description=(
+                f"Examiner '{examiner_advisor.user.email}' assigned to student "
+                f"'{student.user.email}' for application {application.id}."
+            ),
+        )
+
+        return Response(
+            {
+                "message": "Examiner assigned successfully.",
+                "student_id": student.id,
+                "examiner_advisor_id": examiner_advisor.id,
+                "application_id": application.id,
+                "assignment_id": assignment.id,
+                "created": created,
             },
             status=status.HTTP_200_OK,
         )
@@ -146,6 +239,33 @@ class AdvisorReviewView(APIView):
             application.advisor_notes = notes
 
         application.save(update_fields=["advisor", "advisor_status", "advisor_notes"])
+
+        from core.services.audit_service import log_audit_event
+        from core.services.notification_service import create_notification
+
+        log_audit_event(
+            actor=request.user,
+            action="APPLICATION_ADVISOR_REVIEWED",
+            target_type="InternshipApplication",
+            target_id=application.id,
+            description=(
+                f"Advisor {request.user.email} {action}d application {application.id} "
+                f"for student {application.student.user.email}."
+            ),
+        )
+
+        # Notify the student of the advisor's decision
+        create_notification(
+            recipient=application.student.user,
+            title="Advisor Review Complete",
+            message=(
+                f"Your application for '{application.position.title}' has been "
+                f"{'approved' if action == 'approve' else 'rejected'} by your advisor."
+            ),
+            notification_type="INTERNSHIP_STATUS_CHANGED",
+            related_object_id=application.id,
+            related_object_type="InternshipApplication",
+        )
 
         return Response(
             {
