@@ -23,13 +23,12 @@ class AcceptOfferView(APIView):
             InternshipApplication, pk=pk, student=request.user.student_profile
         )
 
-        if application.mentor_status != "ACCEPTED":
-            raise ValidationError("No offer to accept")
+        if application.dept_status != "APPROVED":
+            raise ValidationError("Coordinator has not approved this application yet.")
 
-        if application.advisor_status != "APPROVED":
+        if application.mentor_status != "ACCEPTED":
             raise ValidationError(
-                "Your advisor has not approved this application yet. "
-                "Please wait for advisor review."
+                "Company mentor has not accepted this application yet."
             )
 
         if application.student_decision == "ACCEPTED":
@@ -66,13 +65,21 @@ class AcceptOfferView(APIView):
             status="NOT_STARTED",
         )
 
-        application.student_decision = "ACCEPTED"
-        application.save()
-
         # Auto-decline all other offers
         InternshipApplication.objects.filter(
             student=application.student, mentor_status="ACCEPTED"
         ).exclude(id=application.id).update(student_decision="DECLINED")
+
+        from core.services.application_service import process_student_confirmation
+
+        try:
+            process_student_confirmation(
+                application=application,
+                actor=request.user,
+                decision="accept",
+            )
+        except ValueError as exc:
+            raise ValidationError(str(exc))
 
         return Response(
             {"message": "Offer accepted", "internship_id": internship.id}, status=201

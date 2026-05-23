@@ -1,6 +1,5 @@
 from decimal import Decimal
 
-from core.filters.internship_filters import InternshipFilter
 from django.db.models import Case, Count, F, Q, Sum, Value, When
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -12,12 +11,14 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.filters.internship_filters import InternshipFilter
 from core.models import (
     Attendance,
     CompanyMentor,
     Internship,
     InternshipApplication,
     InternshipPosition,
+    Staff,
     Supervisor,
 )
 from core.permissions import IsCompanyMentor, IsMentorOfCompany, IsStudentUser
@@ -26,6 +27,7 @@ from core.serializers.internship_serializer import (
     InternshipNotesSerializer,
     InternshipPositionSerializer,
     InternshipRecordSerializer,
+    StudentApplicationSerializer,
 )
 from core.services.notification_service import create_notification
 
@@ -50,7 +52,9 @@ class InternshipApplicationCreateView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         position = get_object_or_404(
-            InternshipPosition, pk=self.kwargs["pk"], is_active=True
+            InternshipPosition.objects.select_related("company__mentor"),
+            pk=self.kwargs["pk"],
+            is_active=True,
         )
 
         if InternshipApplication.objects.filter(
@@ -58,7 +62,65 @@ class InternshipApplicationCreateView(generics.CreateAPIView):
         ).exists():
             raise ValidationError("Already applied")
 
-        serializer.save(student=self.request.user.student_profile, position=position)
+        from core.services.application_service import build_form_snapshot
+        from core.services.audit_service import log_audit_event
+
+        student = self.request.user.student_profile
+
+        requested_start = serializer.validated_data.get("requested_start_date")
+        requested_end = serializer.validated_data.get("requested_end_date")
+        working_days = serializer.validated_data.get("working_days_per_week")
+        working_hours = serializer.validated_data.get("working_hours_per_day")
+
+        snapshot = build_form_snapshot(
+            student=student,
+            position=position,
+            requested_start_date=requested_start,
+            requested_end_date=requested_end,
+            working_days_per_week=working_days,
+            working_hours_per_day=working_hours,
+        )
+
+        # Assign the position's company mentor automatically so they can
+        # review the application without a separate assignment step.
+        company_mentor = getattr(position.company, "mentor", None)
+
+        application = serializer.save(
+            student=student,
+            position=position,
+            mentor=company_mentor,
+            form_snapshot=snapshot,
+        )
+
+        log_audit_event(
+            actor=self.request.user,
+            action="APPLICATION_SUBMITTED",
+            target_type="InternshipApplication",
+            target_id=application.id,
+            description=(
+                f"Student {self.request.user.email} applied for "
+                f"'{position.title}' at '{position.company.company_name}'."
+            ),
+        )
+
+        # Notify coordinator
+        dept_staff = (
+            Staff.objects.filter(department=student.department)
+            .select_related("user")
+            .first()
+        )
+        if dept_staff:
+            create_notification(
+                recipient=dept_staff.user,
+                title="New Internship Application",
+                message=(
+                    f"Student {self.request.user.get_full_name() or self.request.user.email} "
+                    f"applied for '{position.title}'. Please review."
+                ),
+                notification_type="INTERNSHIP_STATUS_CHANGED",
+                related_object_id=application.id,
+                related_object_type="InternshipApplication",
+            )
 
 
 class InternshipListCreateView(generics.ListCreateAPIView):
@@ -80,7 +142,17 @@ class InternshipListCreateView(generics.ListCreateAPIView):
             raise PermissionDenied("Only company mentors can create internships")
 
         mentor = CompanyMentor.objects.get(user=self.request.user)
-        serializer.save(company=mentor.company)
+        position = serializer.save(company=mentor.company)
+
+        from core.services.audit_service import log_audit_event
+
+        log_audit_event(
+            actor=self.request.user,
+            action="INTERNSHIP_POSITION_CREATED",
+            target_type="InternshipPosition",
+            target_id=position.id,
+            description=f"Position '{position.title}' created for {mentor.company.company_name}.",
+        )
 
 
 class InternshipRetrieveUpdateView(generics.RetrieveUpdateAPIView):
@@ -89,12 +161,26 @@ class InternshipRetrieveUpdateView(generics.RetrieveUpdateAPIView):
     queryset = InternshipPosition.objects.all()
 
     def perform_update(self, serializer):
-        mentor = CompanyMentor.objects.get(user=self.request.user)
+        mentor = CompanyMentor.objects.filter(user=self.request.user).first()
+        if not mentor:
+            raise PermissionDenied(
+                "Only company mentors can update internship positions"
+            )
 
         if serializer.instance.company != mentor.company:
             raise PermissionDenied("You cannot update internships from another company")
 
-        serializer.save()
+        position = serializer.save()
+
+        from core.services.audit_service import log_audit_event
+
+        log_audit_event(
+            actor=self.request.user,
+            action="INTERNSHIP_POSITION_UPDATED",
+            target_type="InternshipPosition",
+            target_id=position.id,
+            description=f"Position '{position.title}' updated by {self.request.user.email}.",
+        )
 
 
 class AvailableInternshipPositionListView(generics.ListAPIView):
@@ -143,6 +229,9 @@ class InternshipRecordListView(generics.ListAPIView):
     ordering = ["-start_date"]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Internship.objects.none()
+
         user = self.request.user
         role = _internship_role(user)
 
@@ -194,50 +283,17 @@ class StartInternshipsByPositionView(APIView):
         if not is_admin and not mentor:
             raise PermissionDenied("Not authorized")
 
-        internships = Internship.objects.filter(
-            position=position,
-            status="NOT_STARTED",
-        )
-
-        if not internships.exists():
-            raise ValidationError("No internships found for this position")
-
         today = timezone.now().date()
-        if internships.filter(start_date__gt=today).exists():
+        if Internship.objects.filter(
+            position=position, status="NOT_STARTED", start_date__gt=today
+        ).exists():
             raise ValidationError("Cannot start before scheduled date")
 
-        # Collect student users BEFORE bulk update for notification
-        student_users = list(
-            internships.select_related("student__user").values_list(
-                "student__user_id", flat=True
-            )
-        )
+        from core.services.lifecycle_service import start_internships_for_position
 
-        updated = internships.update(
-            status="ONGOING",
-            start_date=Case(
-                When(start_date__isnull=True, then=Value(today)),
-                default=F("start_date"),
-            ),
-        )
-
-        # Notify each affected student
-        from django.contrib.auth import get_user_model
-
-        _User = get_user_model()
-        for uid in student_users:
-            try:
-                user = _User.objects.get(pk=uid)
-                create_notification(
-                    recipient=user,
-                    title="Internship Started",
-                    message=f"Your internship for '{position.title}' has started.",
-                    notification_type="INTERNSHIP_STATUS_CHANGED",
-                    related_object_id=position.id,
-                    related_object_type="InternshipPosition",
-                )
-            except _User.DoesNotExist:
-                pass
+        updated = start_internships_for_position(position, actor=user)
+        if updated == 0:
+            raise ValidationError("No internships found for this position")
 
         return Response(
             {
@@ -272,23 +328,9 @@ class CompleteInternshipView(APIView):
         if internship.status != "ONGOING":
             raise ValidationError("Internship must be ongoing")
 
-        total_hours = Attendance.objects.filter(
-            internship=internship,
-        ).aggregate(total=Sum("total_hours"))["total"] or Decimal("0")
+        from core.services.lifecycle_service import complete_internship
 
-        internship.status = "COMPLETED"
-        internship.end_date = timezone.now().date()
-        internship.total_hours = total_hours
-        internship.save(update_fields=["status", "end_date", "total_hours"])
-
-        create_notification(
-            recipient=internship.student.user,
-            title="Internship Completed",
-            message=f"Your internship for '{internship.position.title}' has been marked as completed.",
-            notification_type="INTERNSHIP_STATUS_CHANGED",
-            related_object_id=internship.id,
-            related_object_type="Internship",
-        )
+        complete_internship(internship, actor=user)
 
         return Response(
             {
@@ -317,18 +359,9 @@ class CancelInternshipView(APIView):
         ):
             raise ValidationError("Cannot cancel after internship has started")
 
-        internship.status = "CANCELLED"
-        internship.end_date = today
-        internship.save(update_fields=["status", "end_date"])
+        from core.services.lifecycle_service import cancel_internship
 
-        create_notification(
-            recipient=internship.student.user,
-            title="Internship Cancelled",
-            message=f"Your internship for '{internship.position.title}' has been cancelled.",
-            notification_type="INTERNSHIP_STATUS_CHANGED",
-            related_object_id=internship.id,
-            related_object_type="Internship",
-        )
+        cancel_internship(internship, actor=request.user)
 
         return Response(
             {"message": "Internship cancelled", "internship_id": internship.id},
@@ -381,4 +414,29 @@ class InternshipNotesView(APIView):
                 "notes": internship.notes,
             },
             status=status.HTTP_200_OK,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Student: list own applications
+# ---------------------------------------------------------------------------
+
+
+class StudentApplicationsListView(generics.ListAPIView):
+    """GET /applications/my/ — paginated list of the student's applications."""
+
+    serializer_class = StudentApplicationSerializer
+    permission_classes = [IsAuthenticated, IsStudentUser]
+
+    def get_queryset(self):
+        return (
+            InternshipApplication.objects.filter(
+                student=self.request.user.student_profile
+            )
+            .select_related(
+                "position",
+                "position__company",
+                "advisor__user",
+            )
+            .order_by("-created_at")
         )

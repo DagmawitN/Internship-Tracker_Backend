@@ -195,6 +195,23 @@ def get_student_dashboard(user: "User") -> dict:
             "total_hours": _safe_float(internship.total_hours),
         }
 
+    # --- My applications ---
+    my_applications = []
+    for app in (
+        InternshipApplication.objects.filter(student=student)
+        .select_related("position__company")
+        .order_by("-created_at")
+    ):
+        my_applications.append(
+            {
+                "id": app.id,
+                "position_title": app.position.title,
+                "company_name": app.position.company.company_name,
+                "overall_status": app.overall_status,
+                "applied_at": app.created_at,
+            }
+        )
+
     # --- Recent notifications ---
     notifications = list(
         Notification.objects.filter(recipient=user)
@@ -209,6 +226,34 @@ def get_student_dashboard(user: "User") -> dict:
         )
     )
 
+    # --- Applications awaiting student confirmation ---
+    awaiting_confirmation = []
+    for app in (
+        InternshipApplication.objects.filter(
+            student=student,
+            dept_status="APPROVED",
+            mentor_status="ACCEPTED",
+            student_decision="PENDING",
+        )
+        .select_related("position__company")
+        .order_by("-created_at")
+    ):
+        awaiting_confirmation.append(
+            {
+                "id": app.id,
+                "position_title": app.position.title,
+                "company_name": app.position.company.company_name,
+                "mentor_signed_at": app.mentor_signed_at,
+                "applied_at": app.created_at,
+            }
+        )
+
+    # --- Resume status ---
+    resume_status = {
+        "has_resume": bool(student.resume),
+        "uploaded_at": student.resume_uploaded_at,
+    }
+
     return {
         "active_internship": active_internship_data,
         "attendance_summary": attendance_summary,
@@ -216,6 +261,9 @@ def get_student_dashboard(user: "User") -> dict:
         "evaluations_summary": evaluations_summary,
         "advisor": advisor_info,
         "recent_notifications": notifications,
+        "my_applications": my_applications,
+        "applications_awaiting_confirmation": awaiting_confirmation,
+        "resume_status": resume_status,
     }
 
 
@@ -285,12 +333,92 @@ def get_advisor_dashboard(user: "User") -> dict:
                 }
             )
 
+    # --- Applied students list ---
+    applied_students = []
+    for app in (
+        InternshipApplication.objects.filter(student__in=student_ids)
+        .select_related("student__user", "position__company")
+        .order_by("-created_at")
+    ):
+        applied_students.append(
+            {
+                "student_id": app.student.id,
+                "student_name": app.student.user.get_full_name()
+                or app.student.user.username,
+                "student_email": app.student.user.email,
+                "overall_status": app.overall_status,
+                "position_title": app.position.title,
+                "company_name": app.position.company.company_name,
+                "applied_at": app.created_at,
+            }
+        )
+
+    # --- Student internship status breakdown ---
+    status_counts = Internship.objects.filter(student__in=student_ids).aggregate(
+        ONGOING=Count("id", filter=Q(status="ONGOING")),
+        COMPLETED=Count("id", filter=Q(status="COMPLETED")),
+        CANCELLED=Count("id", filter=Q(status="CANCELLED")),
+        NOT_STARTED=Count("id", filter=Q(status="NOT_STARTED")),
+    )
+    student_statuses = {
+        "ONGOING": status_counts["ONGOING"],
+        "COMPLETED": status_counts["COMPLETED"],
+        "CANCELLED": status_counts["CANCELLED"],
+        "NOT_STARTED": status_counts["NOT_STARTED"],
+    }
+
+    # --- Pending review applications ---
+    # mentor accepted the offer but advisor has not yet reviewed
+    pending_review_applications = []
+    for app in (
+        InternshipApplication.objects.filter(
+            student__in=student_ids,
+            mentor_status="ACCEPTED",
+            advisor_status="PENDING",
+        )
+        .select_related("student__user", "position__company")
+        .order_by("-created_at")
+    ):
+        pending_review_applications.append(
+            {
+                "application_id": app.id,
+                "student_name": app.student.user.get_full_name()
+                or app.student.user.username,
+                "position_title": app.position.title,
+                "company_name": app.position.company.company_name,
+                "mentor_status": app.mentor_status,
+                "applied_at": app.created_at,
+            }
+        )
+
+    # --- Active interns (ONGOING internships for assigned students) ---
+    active_interns = []
+    for intern in Internship.objects.filter(
+        student__in=student_ids, status="ONGOING"
+    ).select_related("student__user", "position__company", "position"):
+        active_interns.append(
+            {
+                "internship_id": intern.id,
+                "student_name": intern.student.user.get_full_name()
+                or intern.student.user.username,
+                "position_title": intern.position.title,
+                "company_name": intern.position.company.company_name,
+                "work_mode": getattr(intern.position, "work_mode", None),
+                "start_date": intern.start_date,
+                "attendance_rate": _calculate_attendance_rate(intern),
+            }
+        )
+
     return {
         "assigned_students": student_count,
         "active_internships": active_count,
         "pending_reports": pending_reports_count,
         "recent_reports": recent_reports,
         "attendance_flags": attendance_flags,
+        "applied_students": applied_students,
+        "student_statuses": student_statuses,
+        "pending_review_applications": pending_review_applications,
+        "active_interns": active_interns,
     }
 
 
@@ -440,6 +568,82 @@ def get_coordinator_dashboard(user: "User") -> dict:
                 }
             )
 
+    # --- Applied students list (up to 50 most recent) ---
+    coord_applied_students = []
+    for app in (
+        InternshipApplication.objects.filter(student__in=student_ids)
+        .select_related("student__user", "position__company")
+        .order_by("-created_at")[:50]
+    ):
+        coord_applied_students.append(
+            {
+                "student_id": app.student.id,
+                "student_name": app.student.user.get_full_name()
+                or app.student.user.username,
+                "overall_status": app.overall_status,
+                "position_title": app.position.title,
+                "company_name": app.position.company.company_name,
+                "applied_at": app.created_at,
+            }
+        )
+
+    # --- Active interns (up to 50) ---
+    coord_active_interns = []
+    for intern in Internship.objects.filter(
+        student__in=student_ids, status="ONGOING"
+    ).select_related(
+        "student__user",
+        "student__advisor__user",
+        "position__company",
+        "position",
+    )[:50]:
+        adv = getattr(intern.student, "advisor", None)
+        advisor_name = adv.user.get_full_name() or adv.user.username if adv else None
+        coord_active_interns.append(
+            {
+                "internship_id": intern.id,
+                "student_name": intern.student.user.get_full_name()
+                or intern.student.user.username,
+                "position_title": intern.position.title,
+                "company_name": intern.position.company.company_name,
+                "work_mode": getattr(intern.position, "work_mode", None),
+                "start_date": intern.start_date,
+                "advisor_name": advisor_name,
+            }
+        )
+
+    # --- Pending applications requiring attention ---
+    # dept_status PENDING  OR  (dept APPROVED, mentor ACCEPTED, advisor still PENDING)
+    coord_pending_applications = []
+    for app in (
+        InternshipApplication.objects.filter(
+            student__in=student_ids,
+        )
+        .filter(
+            Q(dept_status="PENDING")
+            | Q(
+                dept_status="APPROVED",
+                mentor_status="ACCEPTED",
+                advisor_status="PENDING",
+            )
+        )
+        .select_related("student__user", "position__company")
+        .order_by("-created_at")
+    ):
+        coord_pending_applications.append(
+            {
+                "application_id": app.id,
+                "student_name": app.student.user.get_full_name()
+                or app.student.user.username,
+                "position_title": app.position.title,
+                "company_name": app.position.company.company_name,
+                "dept_status": app.dept_status,
+                "mentor_status": app.mentor_status,
+                "advisor_status": app.advisor_status,
+                "applied_at": app.created_at,
+            }
+        )
+
     return {
         "department": department.department_name,
         "students_count": student_count,
@@ -450,6 +654,9 @@ def get_coordinator_dashboard(user: "User") -> dict:
         "pending_reports": pending_reports,
         "advisor_workload": advisor_workload,
         "attendance_flags": attendance_flags,
+        "applied_students": coord_applied_students,
+        "active_interns": coord_active_interns,
+        "pending_applications": coord_pending_applications,
     }
 
 

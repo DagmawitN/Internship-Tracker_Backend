@@ -1,15 +1,16 @@
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
-from core.models import UserRole,Advisor
-from core.permissions import IsAdminUser,IsCoordinatorUser,IsStudentUser
-from core.serializers.user_serializers import AssignRoleSerializer
-from rest_framework import generics
+from rest_framework import generics, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from core.models import Advisor, UserRole
+from core.permissions import IsAdminUser, IsCoordinatorUser, IsStudentUser
 from core.serializers.auth_serializers import UserSerializer
+from core.serializers.user_serializers import AssignRoleSerializer
 
 User = get_user_model()
+
 
 class UserViewSet(viewsets.GenericViewSet):
     queryset = User.objects.all()
@@ -18,7 +19,7 @@ class UserViewSet(viewsets.GenericViewSet):
 
     @action(
         detail=False,
-        methods=['post'],
+        methods=["post"],
         permission_classes=[IsAdminUser],
         url_name="admin_assign_role",
     )
@@ -45,7 +46,7 @@ class UserViewSet(viewsets.GenericViewSet):
 
     @action(
         detail=False,
-        methods=['post'],
+        methods=["post"],
         permission_classes=[IsCoordinatorUser],
         url_name="coordinator_assign_role",
     )
@@ -56,7 +57,7 @@ class UserViewSet(viewsets.GenericViewSet):
         user = serializer.validated_data["user"]
         role = serializer.validated_data["role"]
 
-        if role.role_name not in ['ADVISOR', 'EXAMINER']:
+        if role.role_name not in ["ADVISOR", "EXAMINER"]:
             return Response(
                 {"error": "Coordinators cannot assign that role."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -65,15 +66,17 @@ class UserViewSet(viewsets.GenericViewSet):
         user.role = role
         user.save()
 
-        coordinator = request.user.coordinator_profile
+        coordinator = getattr(request.user, "staff", None)
+        if not coordinator:
+            return Response(
+                {"error": "Coordinator profile not found."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         advisor = None
 
         if role.role_name == "ADVISOR":
-            advisor,created = Advisor.objects.get_or_create(
-                user=user,
-                defaults={
-                    "department": coordinator.department
-                }
+            advisor, created = Advisor.objects.get_or_create(
+                user=user, defaults={"department": coordinator.department}
             )
 
         return Response(
@@ -87,12 +90,15 @@ class UserViewSet(viewsets.GenericViewSet):
             },
             status=status.HTTP_200_OK,
         )
+
+
 class StudentsList(generics.ListAPIView):
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         return User.objects.filter(role__role_name="STUDENT")
+
 
 class UsersList(generics.ListAPIView):
     queryset = User.objects.all()

@@ -9,6 +9,12 @@ class AssignAdvisorSerializer(serializers.Serializer):
     )
 
 
+class AssignExaminerSerializer(serializers.Serializer):
+    examiner_id = serializers.IntegerField(
+        help_text="PK of the Advisor record to assign as examiner"
+    )
+
+
 class AdvisorReviewSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=["approve", "reject"])
     notes = serializers.CharField(required=False, allow_blank=True, default="")

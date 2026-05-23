@@ -75,8 +75,19 @@ class CreateWeeklyLogbookAPIView(APIView):
 
         student = request.user.student_profile
 
-        internship = InternshipApplication.objects.filter(
+        from core.models import Internship as InternshipRecord
+
+        internship_record = InternshipRecord.objects.filter(
             student=student, status="ONGOING"
+        ).first()
+        if not internship_record:
+            return Response(
+                {"error": "No active internship found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        internship = InternshipApplication.objects.filter(
+            student=student,
+            student_decision="ACCEPTED",
         ).first()
 
         if not internship:
@@ -150,14 +161,15 @@ class SubmitFinalReportAPIView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Find student's active or completed internship
+        # Find student's active or accepted internship application
         internship = InternshipApplication.objects.filter(
-            student=student, status__in=["ONGOING", "COMPLETED"]
+            student=student,
+            student_decision="ACCEPTED",
         ).first()
 
         if not internship:
             return Response(
-                {"error": "No active or completed internship found."},
+                {"error": "No accepted internship application found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -175,7 +187,17 @@ class SubmitFinalReportAPIView(APIView):
                 internship=internship,
                 report_type="FINAL",
                 status="SUBMITTED",
-                submission_date=timezone.now,
+                submission_date=timezone.now(),
+            )
+
+            from core.services.audit_service import log_audit_event
+
+            log_audit_event(
+                actor=request.user,
+                action="REPORT_SUBMITTED",
+                target_type="Report",
+                target_id=report.id,
+                description=f"Final report submitted by student {student.id}.",
             )
 
             # Notify advisor that a report has been submitted
@@ -217,14 +239,15 @@ class SubmitFinalReportAPIView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Find student's active or completed internship
+        # Find student's accepted internship application
         internship = InternshipApplication.objects.filter(
-            student=student, status__in=["ONGOING", "COMPLETED"]
+            student=student,
+            student_decision="ACCEPTED",
         ).first()
 
         if not internship:
             return Response(
-                {"error": "No active or completed internship found for this student."},
+                {"error": "No accepted internship application found for this student."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -264,7 +287,8 @@ class AdvisorFinalReportListAPIView(APIView):
         # Check if user has Advisor role
         if (
             not hasattr(request.user, "role")
-            or request.user.role.role_name != "Advisor"
+            or not request.user.role
+            or request.user.role.role_name != "ADVISOR"
         ):
             return Response(
                 {"error": "Only advisors can access this endpoint."},
@@ -304,7 +328,8 @@ class AdvisorWeeklyLogbookListAPIView(APIView):
         # Check if user has Advisor role
         if (
             not hasattr(request.user, "role")
-            or request.user.role.role_name != "Advisor"
+            or not request.user.role
+            or request.user.role.role_name != "ADVISOR"
         ):
             return Response(
                 {"error": "Only advisors can access this endpoint."},

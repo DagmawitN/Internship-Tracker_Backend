@@ -1,6 +1,7 @@
 import random
 
 from cloudinary.models import CloudinaryField
+from cloudinary_storage.storage import RawMediaCloudinaryStorage
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
@@ -158,6 +159,17 @@ class Student(TimeStampedModel):
         related_name="assigned_students",
     )
 
+    # ---- Resume ----
+    # RawMediaCloudinaryStorage ensures PDFs and DOCX files are uploaded
+    # to Cloudinary with resource_type="raw" (not "image").
+    resume = models.FileField(
+        upload_to="resumes/",
+        storage=RawMediaCloudinaryStorage(),
+        null=True,
+        blank=True,
+    )
+    resume_uploaded_at = models.DateTimeField(null=True, blank=True)
+
     def __str__(self):
         return f"{self.student_id} - {self.user}"
 
@@ -167,6 +179,12 @@ class Skill(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class WorkMode(models.TextChoices):
+    REMOTE = "REMOTE", _("Remote")
+    ONSITE = "ONSITE", _("Onsite")
+    HYBRID = "HYBRID", _("Hybrid")
 
 
 class InternshipPosition(TimeStampedModel):
@@ -197,6 +215,13 @@ class InternshipPosition(TimeStampedModel):
     )
     daily_start_time = models.TimeField(null=True, blank=True)
     daily_end_time = models.TimeField(null=True, blank=True)
+
+    # Work mode
+    work_mode = models.CharField(
+        max_length=10,
+        choices=WorkMode.choices,
+        default=WorkMode.ONSITE,
+    )
 
     # Location
     is_remote = models.BooleanField(default=False)
@@ -283,8 +308,49 @@ class InternshipApplication(TimeStampedModel):
     )
     advisor_notes = models.TextField(blank=True)
 
+    # ---- Internship request form dates & schedule ----
+    requested_start_date = models.DateField(null=True, blank=True)
+    requested_end_date = models.DateField(null=True, blank=True)
+    working_days_per_week = models.PositiveIntegerField(null=True, blank=True)
+    working_hours_per_day = models.DecimalField(
+        max_digits=4, decimal_places=1, null=True, blank=True
+    )
+
+    # ---- Immutable snapshot of student/company/mentor at time of application ----
+    form_snapshot = models.JSONField(default=dict, blank=True)
+
+    # ---- Rejection reason (required when mentor rejects) ----
+    rejection_reason = models.TextField(blank=True)
+
+    # ---- Coordinator signature ----
+    coordinator_signature = models.CharField(max_length=255, blank=True)
+    coordinator_signed_at = models.DateTimeField(null=True, blank=True)
+
+    # ---- Mentor signature ----
+    mentor_signature = models.CharField(max_length=255, blank=True)
+    mentor_signed_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         unique_together = ("student", "position")
+
+    @property
+    def overall_status(self):
+        """Compute a unified application status from workflow states."""
+        if self.student_decision == "DECLINED":
+            return "DECLINED"
+        if self.student_decision == "ACCEPTED":
+            return "ACCEPTED"
+        if (
+            self.dept_status == "REJECTED"
+            or self.mentor_status == "REJECTED"
+            or self.advisor_status == "REJECTED"
+        ):
+            return "DECLINED"
+        if self.mentor_status == "ACCEPTED":
+            return "OFFER_RECEIVED"
+        if self.dept_status == "APPROVED":
+            return "AWAITING_MENTOR"
+        return "PENDING"
 
     def __str__(self):
         return f"{self.student} -> {self.position.title} ({self.dept_status})"
@@ -809,3 +875,30 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"[{self.notification_type}] {self.recipient} — {self.title}"
+
+
+class AuditLog(models.Model):
+    """Centralized audit trail for important system actions."""
+
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="audit_logs",
+    )
+    action = models.CharField(max_length=100)
+    target_type = models.CharField(max_length=100, blank=True)
+    target_id = models.PositiveIntegerField(null=True, blank=True)
+    description = models.TextField(blank=True)
+    timestamp = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["-timestamp"]
+        indexes = [
+            models.Index(fields=["actor"]),
+            models.Index(fields=["action"]),
+        ]
+
+    def __str__(self):
+        return f"[{self.action}] by {self.actor} at {self.timestamp}"
