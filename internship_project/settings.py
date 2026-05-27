@@ -15,16 +15,38 @@ import os
 from datetime import timedelta
 import importlib.util
 
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv()
-except ModuleNotFoundError:
-    # Allow running without python-dotenv; env vars can still be set by the host
-    pass
-
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _load_env_file() -> None:
+    env_path = BASE_DIR / ".env"
+
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path, override=True)
+    except ModuleNotFoundError:
+        # Allow running without python-dotenv; fall back to a tiny parser below.
+        pass
+
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        current_value = os.environ.get(key)
+        if current_value is None or not current_value.strip():
+            os.environ[key] = value
+
+
+_load_env_file()
 
 
 # Quick-start development settings - unsuitable for production
@@ -148,6 +170,19 @@ else:
     }
 
 
+# def _log_database_connection_status() -> None:
+#     database_config = DATABASES.get("default", {})
+#     print("[DB] DATABASE_URL loaded:", bool(DATABASE_URL), flush=True)
+#     print("[DB] ENGINE:", database_config.get("ENGINE"), flush=True)
+#     print("[DB] NAME:", database_config.get("NAME"), flush=True)
+#     print("[DB] HOST:", database_config.get("HOST"), flush=True)
+#     print("[DB] Skipping startup connection test to avoid blocking runserver.", flush=True)
+
+
+# if DEBUG and os.environ.get("RUN_MAIN") == "true":
+#     _log_database_connection_status()
+
+
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 
@@ -183,6 +218,9 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = '/static/'
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 # STATICFILES_DIRS = [
 #     BASE_DIR / 'static',
@@ -220,8 +258,12 @@ CLOUDINARY_STORAGE = {
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=6), 
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ACCESS_TOKEN_LIFETIME": timedelta(days=3),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": True,
+    "AUTH_HEADER_TYPES": ("Bearer",),
 }
 EMAIL_TIMEOUT = 10
 EMAIL_USE_LOCALTIME = False

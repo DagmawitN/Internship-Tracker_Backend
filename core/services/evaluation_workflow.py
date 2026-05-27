@@ -85,7 +85,17 @@ def sync_overall_from_examiner(internship_id):
 def sync_overall_from_company(company_eval):
     if not company_eval or not company_eval.internship_id:
         return
-    overall = get_or_create_overall(company_eval.internship)
+    # FinalIndustryEvaluation.internship is an Internship (execution) record,
+    # but OverallInternshipEvaluation.internship is an InternshipApplication.
+    # Resolve the application from the execution record.
+    internship_record = company_eval.internship
+    application = InternshipApplication.objects.filter(
+        student=internship_record.student,
+        position=internship_record.position,
+    ).order_by("-id").first()
+    if not application:
+        return
+    overall = get_or_create_overall(application)
     overall.company_evaluation = company_eval
     overall.company_score = company_eval.overall_student_performance
     overall.calculate_final()

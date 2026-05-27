@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from core.models import Company, CompanyMentor, InternshipApplication
+from core.models import Company, CompanyMentor, InternshipApplication, InternshipPosition
 from core.permissions import IsCompanyMentor, IsMentorOfCompany
 from core.serializers.company_serializer import (
     CompanyApplicationSerializer,
@@ -16,6 +16,29 @@ from core.serializers.company_serializer import (
 )
 
 User = get_user_model()
+
+
+def _company_for_user(user):
+    mentor = CompanyMentor.objects.filter(user=user).select_related("company").first()
+    if mentor:
+        return mentor.company
+
+    role = getattr(user, "role", None)
+    role_name = role if isinstance(role, str) else getattr(role, "role_name", "")
+    if str(role_name).upper() == "COMPANY":
+        company = Company.objects.filter(contact_email=user.email, is_active=True).first()
+        if company:
+            return company
+
+        mentor_by_company_email = (
+            CompanyMentor.objects.filter(company__contact_email=user.email)
+            .select_related("company")
+            .first()
+        )
+        if mentor_by_company_email:
+            return mentor_by_company_email.company
+
+    return None
 
 
 class ActionSerializer(serializers.Serializer):
@@ -26,22 +49,16 @@ class ActionSerializer(serializers.Serializer):
 
 class CompanyApplicantsListView(generics.ListAPIView):
     serializer_class = CompanyApplicationSerializer
-    permission_classes = [
-        permissions.IsAuthenticated,
-        IsCompanyMentor,
-        IsMentorOfCompany,
-    ]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         company_id = self.kwargs["company_id"]
-        mentor = CompanyMentor.objects.filter(
-            user=self.request.user, company_id=company_id
-        ).first()
-        if not mentor:
+        company = _company_for_user(self.request.user)
+        if not company or company.id != int(company_id):
             raise PermissionDenied("You can only view applicants for your company.")
 
         queryset = InternshipApplication.objects.filter(
-            position__company_id=mentor.company_id
+            position__company_id=company.id
         )
 
         dept_status = self.request.query_params.get("dept_status")
@@ -64,6 +81,47 @@ class CompanyApplicantsListView(generics.ListAPIView):
         return queryset
 
 
+class InternshipApplicantsListView(generics.ListAPIView):
+    serializer_class = CompanyApplicationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        position = get_object_or_404(InternshipPosition, pk=self.kwargs["position_id"])
+        company = _company_for_user(self.request.user)
+        # Optional query parameter allowed from frontend: ?company_id=<id>
+        # Validate that, if provided, it matches the logged-in user's company.
+        company_id_param = self.request.query_params.get("company_id") or self.request.query_params.get("company")
+        if company_id_param:
+            try:
+                if int(company_id_param) != (company.id if company else None):
+                    raise PermissionDenied("You can only view applicants for your company.")
+            except (ValueError, TypeError):
+                raise PermissionDenied("Invalid company_id parameter provided.")
+
+        if not company or position.company_id != company.id:
+            raise PermissionDenied("You can only view applicants for your own internships.")
+
+        queryset = InternshipApplication.objects.filter(position=position)
+
+        dept_status = self.request.query_params.get("dept_status")
+        mentor_status = self.request.query_params.get("mentor_status")
+        student_decision = self.request.query_params.get("student_decision")
+
+        status_alias = self.request.query_params.get("status")
+        if status_alias and not mentor_status:
+            mentor_status = status_alias
+
+        if dept_status:
+            queryset = queryset.filter(dept_status=dept_status.strip().upper())
+        if mentor_status:
+            queryset = queryset.filter(mentor_status=mentor_status.strip().upper())
+        if student_decision:
+            queryset = queryset.filter(
+                student_decision=student_decision.strip().upper()
+            )
+        return queryset
+
+
 class CompanyApplicantActionView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = ActionSerializer
@@ -71,12 +129,12 @@ class CompanyApplicantActionView(APIView):
     def patch(self, request, *args, **kwargs):
         application = get_object_or_404(InternshipApplication, id=kwargs["id"])
 
-        mentor = CompanyMentor.objects.filter(user=request.user).first()
-        if not mentor:
-            raise PermissionDenied("Only company mentors can modify applications.")
+        company = _company_for_user(request.user)
+        if not company:
+            raise PermissionDenied("Only company users can modify applications.")
 
         # Ensure application belongs to mentor's company
-        if application.position.company_id != mentor.company_id:
+        if application.position.company_id != company.id:
             raise PermissionDenied("You cannot modify this application.")
 
         if application.dept_status != "APPROVED":
@@ -125,21 +183,18 @@ class VerifiedCompaniesListView(generics.ListAPIView):
 
 
 class MentorReviewView(APIView):
-    permission_classes = [IsAuthenticated, IsCompanyMentor]
+    permission_classes = [IsAuthenticated]
     serializer_class = ActionSerializer
 
     def patch(self, request, pk):
         application = get_object_or_404(InternshipApplication, pk=pk)
 
-        mentor = CompanyMentor.objects.filter(user=request.user).first()
-        if not mentor:
-            raise PermissionDenied("Only company mentors can review applications.")
-        print(mentor.company)
-        print(application.position.company)
-        print(mentor.company_id)
+        company = _company_for_user(request.user)
+        if not company:
+            raise PermissionDenied("Only company users can review applications.")
 
         # Ensure mentor belongs to the company
-        if application.position.company != mentor.company:
+        if application.position.company != company:
             raise PermissionDenied("Not your company")
 
         from core.services.application_service import process_mentor_review

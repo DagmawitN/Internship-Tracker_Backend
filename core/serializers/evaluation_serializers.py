@@ -76,6 +76,7 @@ class FinalIndustryEvaluationSerializer(serializers.ModelSerializer):
             "would_offer_job",
             "total_mark",
             "overall_student_performance",
+            "form_data",
         ]
         read_only_fields = [
             "id",
@@ -135,15 +136,7 @@ class FinalIndustryEvaluationSerializer(serializers.ModelSerializer):
         return self.validate_score(value, "decision_making")
 
     def validate_internship(self, value):
-        active = Internship.objects.filter(
-            student=value.student,
-            position=value.position,
-            status="COMPLETED",
-        ).exists()
-        if not active:
-            raise serializers.ValidationError(
-                "Internship must be completed to submit evaluation."
-            )
+        # Allow both ONGOING and COMPLETED internships — company submits during active placement
         return value
 
     def validate(self, data):
@@ -338,6 +331,7 @@ class MonthlyIndustryEvaluationSerializer(serializers.ModelSerializer):
             "initiative_score",
             "comments",
             "total_score",
+            "form_data",
         ]
         read_only_fields = [
             "id",
@@ -404,6 +398,9 @@ class AdvisorQueueSerializer(serializers.Serializer):
 
 class ExaminerEvaluationSerializer(serializers.ModelSerializer):
     student_full_name = serializers.SerializerMethodField()
+    student_id = serializers.SerializerMethodField()
+    company_name = serializers.SerializerMethodField()
+    examiner_name = serializers.SerializerMethodField()
     weighted_score = serializers.DecimalField(
         max_digits=5, decimal_places=3, read_only=True
     )
@@ -414,7 +411,10 @@ class ExaminerEvaluationSerializer(serializers.ModelSerializer):
             "id",
             "internship",
             "student_full_name",
+            "student_id",
+            "company_name",
             "examiner",
+            "examiner_name",
             "submitted_at",
             "technical_skills_score",
             "communication_score",
@@ -424,6 +424,7 @@ class ExaminerEvaluationSerializer(serializers.ModelSerializer):
             "comments",
             "total_score",
             "weighted_score",
+            "form_data",
         ]
         read_only_fields = ["id", "examiner", "submitted_at", "total_score", "weighted_score"]
 
@@ -443,6 +444,20 @@ class ExaminerEvaluationSerializer(serializers.ModelSerializer):
     def get_student_full_name(self, obj):
         user = obj.internship.student.user
         return f"{user.first_name} {user.last_name}".strip() or user.username
+
+    def get_student_id(self, obj):
+        return obj.internship.student.student_id
+
+    def get_company_name(self, obj):
+        try:
+            return obj.internship.position.company.company_name
+        except Exception:
+            return ""
+
+    def get_examiner_name(self, obj):
+        if obj.examiner:
+            return obj.examiner.get_full_name() or obj.examiner.username
+        return ""
 
 
 class OverallInternshipEvaluationSerializer(serializers.ModelSerializer):

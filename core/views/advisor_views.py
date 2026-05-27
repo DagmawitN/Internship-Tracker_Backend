@@ -1,4 +1,6 @@
 from django.shortcuts import get_object_or_404
+from django.db import models
+from django.db.models import Count
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -12,7 +14,7 @@ from core.models import (
     InternshipApplication,
     Student,
 )
-from core.permissions import IsAdvisorUser, IsCoordinatorUser
+from core.permissions import IsAdvisorUser, IsCoordinatorUser, IsExaminerUser
 from core.serializers.advisor_serializer import (
     AdvisorNotesSerializer,
     AdvisorReviewSerializer,
@@ -32,20 +34,40 @@ def _get_role(user):
 
 
 class AdvisorListView(generics.ListAPIView):
-    """GET /advisors/  — coordinator sees all advisors in their department."""
+    """GET /advisors/ — list advisors, optionally limited to unassigned ones."""
 
     serializer_class = AdvisorSerializer
     permission_classes = [IsAuthenticated, IsCoordinatorUser]
 
     def get_queryset(self):
-        staff = getattr(self.request.user, "staff", None)
-        if not staff:
-            return Advisor.objects.none()
-        return (
-            Advisor.objects.filter(department=staff.department)
+        token = getattr(self.request, "auth", None)
+        department_id = None
+
+        if token:
+            if hasattr(token, "get"):
+                department_id = token.get("department_id")
+            else:
+                department_id = getattr(token, "department_id", None)
+
+        if not department_id:
+            staff = getattr(self.request.user, "staff", None)
+            if staff:
+                department_id = staff.department_id
+
+        queryset = (
+            Advisor.objects.filter(department_id=department_id)
             .select_related("user", "department")
             .prefetch_related("assigned_students")
         )
+
+        # Support filtering by unassigned advisors if requested.
+        unassigned = self.request.query_params.get("unassigned", "").lower() == "true"
+        if unassigned:
+            queryset = queryset.annotate(
+                assigned_count=Count("assigned_students")
+            ).filter(assigned_count=0)
+
+        return queryset
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +76,9 @@ class AdvisorListView(generics.ListAPIView):
 
 
 class AssignAdvisorView(APIView):
-    """POST /students/{pk}/assign-advisor/"""
+    """POST /students/{pk}/assign-advisor/
+       DELETE /students/{pk}/assign-advisor/  — remove advisor assignment
+    """
 
     permission_classes = [IsAuthenticated, IsCoordinatorUser]
     serializer_class = AssignAdvisorSerializer
@@ -75,7 +99,10 @@ class AssignAdvisorView(APIView):
         serializer.is_valid(raise_exception=True)
         advisor_id = serializer.validated_data["advisor_id"]
 
-        advisor = get_object_or_404(Advisor, pk=advisor_id)
+        # advisor_id is the User PK of the staff member
+        advisor = Advisor.objects.filter(user_id=advisor_id).first()
+        if not advisor:
+            raise ValidationError("No Advisor profile found for the given user. Ensure the staff member has the ADVISOR role.")
 
         # Enforce same-department rule for advisor
         if advisor.department != coordinator_staff.department:
@@ -85,12 +112,12 @@ class AssignAdvisorView(APIView):
         student.advisor = advisor
         student.save(update_fields=["advisor"])
 
-        # Auto-link advisor to any applications where mentor accepted but advisor not yet assigned
+        # Link advisor to all active applications for this student
         updated = InternshipApplication.objects.filter(
             student=student,
-            mentor_status="ACCEPTED",
-            advisor__isnull=True,
-        ).update(advisor=advisor, dept_status="APPROVED")
+        ).filter(
+            models.Q(dept_status="APPROVED") | models.Q(student_decision="ACCEPTED")
+        ).update(advisor=advisor)
 
         from core.services.audit_service import log_audit_event
 
@@ -112,9 +139,43 @@ class AssignAdvisorView(APIView):
             status=status.HTTP_200_OK,
         )
 
+    def delete(self, request, pk):
+        """Remove advisor assignment from a student."""
+        student = get_object_or_404(Student, user__id=pk)
+
+        coordinator_staff = getattr(request.user, "staff", None)
+        if not coordinator_staff:
+            raise PermissionDenied("You are not a department coordinator.")
+
+        if student.department != coordinator_staff.department:
+            raise PermissionDenied("This student is not in your department.")
+
+        student.advisor = None
+        student.save(update_fields=["advisor"])
+
+        from core.services.audit_service import log_audit_event
+
+        log_audit_event(
+            actor=request.user,
+            action="ADVISOR_REMOVED",
+            target_type="Student",
+            target_id=student.id,
+            description=f"Advisor removed from student '{student.user.email}'.",
+        )
+
+        return Response(
+            {
+                "message": "Advisor assignment removed.",
+                "student_id": student.id,
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class AssignExaminerView(APIView):
-    """POST /students/{pk}/assign-examiner/"""
+    """POST /students/{pk}/assign-examiner/
+       DELETE /students/{pk}/assign-examiner/  — remove examiner assignment
+    """
 
     permission_classes = [IsAuthenticated, IsCoordinatorUser]
     serializer_class = AssignExaminerSerializer
@@ -135,33 +196,43 @@ class AssignExaminerView(APIView):
         serializer.is_valid(raise_exception=True)
         examiner_id = serializer.validated_data["examiner_id"]
 
-        examiner_advisor = get_object_or_404(Advisor, pk=examiner_id)
+        # examiner_id is the User PK — look up the User directly (examiners don't have Advisor profiles)
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        examiner_user = get_object_or_404(User, pk=examiner_id)
 
-        # Enforce same-department rule for examiner
-        if examiner_advisor.department != coordinator_staff.department:
+        # Verify the user belongs to the coordinator's department via Staff record
+        examiner_staff = getattr(examiner_user, "staff", None)
+        if not examiner_staff or examiner_staff.department != coordinator_staff.department:
             raise ValidationError("Examiner does not belong to your department.")
 
-        # Find accepted application for this student
+        # Find the application for this student — match on dept_status APPROVED
+        # (same logic as assign-advisor; student_decision may still be PENDING in some workflows)
         application = InternshipApplication.objects.filter(
             student=student,
-            student_decision="ACCEPTED",
-        ).first()
+        ).filter(
+            models.Q(student_decision="ACCEPTED") | models.Q(dept_status="APPROVED")
+        ).order_by("-created_at").first()
 
         if not application:
             raise ValidationError(
                 "No accepted internship application found for this student."
             )
 
-        # Create or update AdvisorAssignment with EXAMINER role
-        assignment, created = AdvisorAssignment.objects.update_or_create(
+        # Create AdvisorAssignment with EXAMINER role — allow multiple examiners per application
+        assignment, created = AdvisorAssignment.objects.get_or_create(
             internship=application,
-            role="EXAMINER",
+            advisor=examiner_user,
             defaults={
-                "advisor": examiner_advisor.user,
+                "role": "EXAMINER",
                 "coordinator": request.user,
                 "student": student.user,
             },
         )
+        if not created:
+            # Already assigned — ensure role is EXAMINER
+            assignment.role = "EXAMINER"
+            assignment.save(update_fields=["role"])
 
         from core.services.audit_service import log_audit_event
 
@@ -171,7 +242,7 @@ class AssignExaminerView(APIView):
             target_type="Student",
             target_id=student.id,
             description=(
-                f"Examiner '{examiner_advisor.user.email}' assigned to student "
+                f"Examiner '{examiner_user.email}' assigned to student "
                 f"'{student.user.email}' for application {application.id}."
             ),
         )
@@ -180,10 +251,60 @@ class AssignExaminerView(APIView):
             {
                 "message": "Examiner assigned successfully.",
                 "student_id": student.id,
-                "examiner_advisor_id": examiner_advisor.id,
+                "examiner_user_id": examiner_user.id,
                 "application_id": application.id,
                 "assignment_id": assignment.id,
                 "created": created,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, pk):
+        """Remove examiner assignment for a student."""
+        student = get_object_or_404(Student, user__id=pk)
+
+        coordinator_staff = getattr(request.user, "staff", None)
+        if not coordinator_staff:
+            raise PermissionDenied("You are not a department coordinator.")
+
+        if student.department != coordinator_staff.department:
+            raise PermissionDenied("This student is not in your department.")
+
+        application = InternshipApplication.objects.filter(
+            student=student,
+        ).filter(
+            models.Q(student_decision="ACCEPTED") | models.Q(dept_status="APPROVED")
+        ).order_by("-created_at").first()
+
+        if not application:
+            raise ValidationError(
+                "No accepted internship application found for this student."
+            )
+
+        # If examiner_id provided, remove only that specific examiner; otherwise remove all
+        examiner_id = request.data.get("examiner_id") if hasattr(request, "data") else None
+        qs = AdvisorAssignment.objects.filter(internship=application, role="EXAMINER")
+        if examiner_id:
+            qs = qs.filter(advisor_id=examiner_id)
+        deleted_count, _ = qs.delete()
+
+        log_audit_event(
+            actor=request.user,
+            action="EXAMINER_REMOVED",
+            target_type="Student",
+            target_id=student.id,
+            description=(
+                f"Examiner removed from student '{student.user.email}' "
+                f"for application {application.id}."
+            ),
+        )
+
+        return Response(
+            {
+                "message": "Examiner assignment removed.",
+                "student_id": student.id,
+                "application_id": application.id,
+                "deleted_count": deleted_count,
             },
             status=status.HTTP_200_OK,
         )
@@ -321,4 +442,117 @@ class AdvisorInternshipNotesView(APIView):
                 "notes": internship.notes,
             },
             status=status.HTTP_200_OK,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Advisor: list students assigned to the logged-in advisor
+# ---------------------------------------------------------------------------
+
+
+class AdvisorMyStudentsView(generics.ListAPIView):
+    """GET /advisor/my-students/
+    Returns all internship applications for students assigned to the
+    currently authenticated advisor, including examiner assignments.
+    """
+
+    permission_classes = [IsAuthenticated, IsAdvisorUser]
+
+    def get_serializer_class(self):
+        from core.serializers.internship_serializer import InternshipRequestFormSerializer
+        return InternshipRequestFormSerializer
+
+    def get_queryset(self):
+        advisor = get_object_or_404(Advisor, user=self.request.user)
+        return (
+            InternshipApplication.objects.filter(
+                student__advisor=advisor,
+            )
+            .filter(
+                models.Q(dept_status="APPROVED") | models.Q(student_decision="ACCEPTED")
+            )
+            .select_related(
+                "student__user",
+                "student__department",
+                "student__advisor__user",
+                "position",
+                "position__company",
+                "advisor__user",
+            )
+            .order_by("-created_at")
+        )
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+
+        # Enrich each application with examiner names from AdvisorAssignment
+        items = response.data if isinstance(response.data, list) else response.data.get("results", [])
+        if not items:
+            return response
+
+        app_ids = [item["id"] for item in items if item.get("id")]
+        examiner_assignments = (
+            AdvisorAssignment.objects.filter(
+                internship_id__in=app_ids,
+                role="EXAMINER",
+            )
+            .select_related("advisor")
+            .order_by("internship_id", "id")
+        )
+
+        # Build map: internship_id → [examiner1_name, examiner2_name]
+        examiner_map = {}
+        for assignment in examiner_assignments:
+            iid = assignment.internship_id
+            name = assignment.advisor.get_full_name() or assignment.advisor.username
+            if iid not in examiner_map:
+                examiner_map[iid] = []
+            examiner_map[iid].append(name)
+
+        for item in items:
+            iid = item.get("id")
+            names = examiner_map.get(iid, [])
+            item["examiner_name"] = names[0] if len(names) > 0 else ""
+            item["examiner2_name"] = names[1] if len(names) > 1 else ""
+
+        return response
+
+
+# ---------------------------------------------------------------------------
+# Examiner: list students assigned to the logged-in examiner
+# ---------------------------------------------------------------------------
+
+
+class ExaminerMyStudentsView(generics.ListAPIView):
+    """GET /examiner/my-students/
+    Returns all internship applications for students assigned to the
+    currently authenticated examiner via AdvisorAssignment (role=EXAMINER).
+    """
+
+    permission_classes = [IsAuthenticated, IsExaminerUser]
+
+    def get_serializer_class(self):
+        from core.serializers.internship_serializer import InternshipRequestFormSerializer
+        return InternshipRequestFormSerializer
+
+    def get_queryset(self):
+        # Get all application IDs where this user is assigned as EXAMINER
+        assigned_app_ids = AdvisorAssignment.objects.filter(
+            advisor=self.request.user,
+            role="EXAMINER",
+        ).values_list("internship_id", flat=True)
+
+        return (
+            InternshipApplication.objects.filter(
+                id__in=assigned_app_ids,
+            )
+            .select_related(
+                "student__user",
+                "student__department",
+                "student__advisor__user",
+                "position",
+                "position__company",
+                "advisor__user",
+            )
+            .order_by("-created_at")
         )

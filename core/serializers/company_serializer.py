@@ -22,7 +22,10 @@ class CompanySerializer(serializers.ModelSerializer):
 
 class CompanyApplicationSerializer(serializers.ModelSerializer):
     position_title = serializers.CharField(source="position.title", read_only=True)
+    company_name = serializers.CharField(source="position.company.company_name", read_only=True)
+    company_id = serializers.IntegerField(source="position.company.id", read_only=True)
     student_email = serializers.EmailField(source="student.user.email", read_only=True)
+    student_id = serializers.CharField(source="student.student_id", read_only=True)
     student_name = serializers.SerializerMethodField()
     overall_status = serializers.SerializerMethodField()
     resume_url = serializers.SerializerMethodField()
@@ -32,8 +35,12 @@ class CompanyApplicationSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "position_title",
+            "company_name",
+            "company_id",
             "student_email",
+            "student_id",
             "student_name",
+            "reason_for_joining",
             "dept_status",
             "mentor_status",
             "student_decision",

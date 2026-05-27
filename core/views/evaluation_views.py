@@ -1,3 +1,4 @@
+from django.db import models
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -10,13 +11,15 @@ from core.models import (
     AdvisorEvaluation,
     CompanyEvaluationStatus,
     CompanyMentor,
+    ExaminerEvaluation,
     FinalIndustryEvaluation,
+    InternshipApplication,
     MonthlyIndustryEvaluation,
     OverallInternshipEvaluation,
     Report,
     ReportReviewStatus,
 )
-from core.permissions import IsAdvisorUser, IsCoordinatorUser
+from core.permissions import IsAdvisorUser, IsCoordinatorUser, IsExaminerUser
 from core.serializers.evaluation_serializers import (
     AdvisorApprovalSerializer,
     AdvisorEvaluationSerializer,
@@ -81,11 +84,18 @@ class FinalIndustryEvaluationListCreateAPIView(generics.ListCreateAPIView):
                 "company_mentor__user",
             )
         if _role_name(user) == "ADVISOR":
-            internship_ids = advisor_internship_queryset(user).values_list(
-                "pk", flat=True
-            )
+            # advisor_internship_queryset returns InternshipApplication PKs,
+            # but FinalIndustryEvaluation.internship → Internship (execution record).
+            # Resolve via student: get students from advisor's applications, then
+            # find Internship execution records for those students.
+            from core.models import Internship as InternshipRecord
+            app_qs = advisor_internship_queryset(user)
+            student_ids = app_qs.values_list("student_id", flat=True)
+            execution_ids = InternshipRecord.objects.filter(
+                student_id__in=student_ids
+            ).values_list("pk", flat=True)
             return FinalIndustryEvaluation.objects.filter(
-                internship_id__in=internship_ids
+                internship_id__in=execution_ids
             ).select_related(
                 "internship__student__user",
                 "internship__position__company",
@@ -164,6 +174,51 @@ class AdvisorEvaluationListCreateAPIView(generics.ListCreateAPIView):
             advisor=self.request.user,
             status=AdvisorEvaluation.Status.PENDING,
         )
+
+
+class CoordinatorAdvisorEvaluationAPIView(APIView):
+    """
+    GET /api/evaluations/advisor/for-coordinator/?internship_id=<id>
+    Allows coordinators (and advisors) to fetch the advisor evaluation for a
+    given InternshipApplication PK.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        role = _role_name(user)
+        if role not in ("COORDINATOR", "ADVISOR"):
+            return Response(
+                {"detail": "Only coordinators and advisors can access this endpoint."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        internship_id = request.query_params.get("internship_id")
+        if not internship_id:
+            return Response(
+                {"error": "internship_id query parameter is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        internship = get_object_or_404(InternshipApplication, pk=internship_id)
+
+        # Coordinators may only view evals for students in their department.
+        if role == "COORDINATOR":
+            staff = getattr(user, "staff", None)
+            if staff and hasattr(internship.student, "department"):
+                if internship.student.department != staff.department:
+                    return Response(
+                        {"detail": "Not found."},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+
+        evaluation = AdvisorEvaluation.objects.filter(internship=internship).first()
+        if not evaluation:
+            return Response(None, status=status.HTTP_200_OK)
+
+        serializer = AdvisorEvaluationSerializer(evaluation)
+        return Response(serializer.data)
 
 
 class AdvisorEvaluationDetailAPIView(generics.RetrieveAPIView):
@@ -255,6 +310,18 @@ class MonthlyIndustryEvaluationListCreateAPIView(generics.ListCreateAPIView):
             return MonthlyIndustryEvaluation.objects.filter(
                 internship_id__in=ids
             ).select_related("internship__student__user", "internship__position__company")
+        if _role_name(user) == "COORDINATOR":
+            staff = getattr(user, "staff", None)
+            qs = MonthlyIndustryEvaluation.objects.select_related(
+                "internship__student__user",
+                "internship__position__company",
+            )
+            if staff and staff.department_id:
+                qs = qs.filter(internship__student__department=staff.department)
+            internship_id = self.request.query_params.get("internship_id")
+            if internship_id:
+                qs = qs.filter(internship_id=internship_id)
+            return qs
         return MonthlyIndustryEvaluation.objects.none()
 
     def perform_create(self, serializer):
@@ -653,3 +720,463 @@ class StudentEvaluationStatusAPIView(APIView):
             build_student_evaluation_status(internship),
             status=status.HTTP_200_OK,
         )
+
+
+# ---------------------------------------------------------------------------
+# Examiner: list own evaluations + submit/update
+# ---------------------------------------------------------------------------
+
+class ExaminerEvaluationListCreateAPIView(APIView):
+    """
+    GET  /api/evaluations/examiner/          — list evaluations submitted by this examiner
+    POST /api/evaluations/examiner/          — submit or update an evaluation
+    """
+
+    permission_classes = [IsAuthenticated, IsExaminerUser]
+
+    def get(self, request):
+        qs = (
+            ExaminerEvaluation.objects.filter(examiner=request.user)
+            .select_related(
+                "internship__student__user",
+                "internship__position__company",
+            )
+            .order_by("-submitted_at")
+        )
+        serializer = ExaminerEvaluationSerializer(qs, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        from core.models import AdvisorAssignment
+
+        internship_id = request.data.get("internship")
+        if not internship_id:
+            return Response(
+                {"error": "internship field is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        internship = get_object_or_404(InternshipApplication, pk=internship_id)
+
+        # Verify this examiner is assigned to this student
+        is_assigned = AdvisorAssignment.objects.filter(
+            advisor=request.user,
+            internship=internship,
+            role="EXAMINER",
+        ).exists()
+        if not is_assigned:
+            return Response(
+                {"error": "You are not assigned as examiner for this student."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Upsert — one evaluation per (internship, examiner)
+        existing = ExaminerEvaluation.objects.filter(
+            internship=internship, examiner=request.user
+        ).first()
+
+        serializer = ExaminerEvaluationSerializer(
+            existing, data=request.data, partial=bool(existing)
+        )
+        serializer.is_valid(raise_exception=True)
+
+        # Store the full granular form_data from the frontend
+        form_data = request.data.get("form_data", {})
+
+        if existing:
+            instance = serializer.save(form_data=form_data)
+            created = False
+        else:
+            instance = serializer.save(examiner=request.user, form_data=form_data)
+            created = True
+
+        from core.services.audit_service import log_audit_event
+        log_audit_event(
+            actor=request.user,
+            action="EXAMINER_EVALUATION_SUBMITTED",
+            target_type="ExaminerEvaluation",
+            target_id=instance.id,
+            description=(
+                f"Examiner {request.user.email} {'submitted' if created else 'updated'} "
+                f"evaluation for {internship.student.user.email}."
+            ),
+        )
+
+        return Response(
+            ExaminerEvaluationSerializer(instance).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class ExaminerEvaluationDetailAPIView(APIView):
+    """
+    GET   /api/evaluations/examiner/<id>/   — retrieve one evaluation
+    PATCH /api/evaluations/examiner/<id>/   — update scores
+    """
+
+    permission_classes = [IsAuthenticated, IsExaminerUser]
+
+    def _get_object(self, pk, user):
+        obj = get_object_or_404(ExaminerEvaluation, pk=pk)
+        if obj.examiner != user:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("You can only access your own evaluations.")
+        return obj
+
+    def get(self, request, pk):
+        obj = self._get_object(pk, request.user)
+        return Response(ExaminerEvaluationSerializer(obj).data)
+
+    def patch(self, request, pk):
+        obj = self._get_object(pk, request.user)
+        form_data = request.data.get("form_data", obj.form_data)
+        serializer = ExaminerEvaluationSerializer(obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(form_data=form_data)
+        return Response(ExaminerEvaluationSerializer(instance).data)
+
+
+# ---------------------------------------------------------------------------
+# Company: upsert monthly evaluation (create or update)
+# ---------------------------------------------------------------------------
+
+class CompanyMonthlyEvaluationUpsertAPIView(APIView):
+    """
+    GET  /api/evaluations/company/monthly/?internship_id=<id>
+         List all monthly evaluations for the company's interns (or filter by internship).
+
+    POST /api/evaluations/company/monthly/
+         Create or update a monthly evaluation.
+         Body: { internship, month_number, work_quality_score, punctuality_score,
+                 attitude_score, initiative_score, comments, form_data }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_mentor(self, user):
+        mentor = CompanyMentor.objects.filter(user=user).first()
+        if not mentor:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only company mentors can access this endpoint.")
+        return mentor
+
+    def get(self, request):
+        mentor = self._get_mentor(request.user)
+        qs = MonthlyIndustryEvaluation.objects.filter(
+            company_mentor=mentor
+        ).select_related(
+            "internship__student__user",
+            "internship__position__company",
+        ).order_by("internship_id", "month_number")
+
+        internship_id = request.query_params.get("internship_id")
+        if internship_id:
+            qs = qs.filter(internship_id=internship_id)
+
+        serializer = MonthlyIndustryEvaluationSerializer(qs, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        mentor = self._get_mentor(request.user)
+
+        internship_id = request.data.get("internship")
+        month_number = request.data.get("month_number")
+
+        if not internship_id or not month_number:
+            return Response(
+                {"error": "internship and month_number are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        internship = get_object_or_404(InternshipApplication, pk=internship_id)
+
+        # Upsert — allow re-submission after rejection
+        existing = MonthlyIndustryEvaluation.objects.filter(
+            internship=internship, month_number=month_number
+        ).first()
+
+        form_data = request.data.get("form_data", {})
+
+        if existing:
+            # Update existing record
+            serializer = MonthlyIndustryEvaluationSerializer(
+                existing, data=request.data, partial=True
+            )
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save(
+                status=CompanyEvaluationStatus.SUBMITTED,
+                form_data=form_data,
+            )
+            created = False
+        else:
+            serializer = MonthlyIndustryEvaluationSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save(
+                company_mentor=mentor,
+                status=CompanyEvaluationStatus.SUBMITTED,
+                form_data=form_data,
+            )
+            created = True
+
+        from core.services.audit_service import log_audit_event
+        log_audit_event(
+            actor=request.user,
+            action="MONTHLY_EVAL_SUBMITTED",
+            target_type="MonthlyIndustryEvaluation",
+            target_id=instance.id,
+            description=(
+                f"Company mentor {request.user.email} {'submitted' if created else 'updated'} "
+                f"Month {month_number} evaluation for internship {internship_id}."
+            ),
+        )
+
+        return Response(
+            MonthlyIndustryEvaluationSerializer(instance).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Company: upsert final evaluation (create or update)
+# ---------------------------------------------------------------------------
+
+class CompanyFinalEvaluationUpsertAPIView(APIView):
+    """
+    GET  /api/evaluations/company/final/?internship_id=<id>
+         List final evaluations for the company's interns.
+
+    POST /api/evaluations/company/final/
+         Create or update a final evaluation.
+         Body: all FinalIndustryEvaluation score fields + form_data
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_mentor(self, user):
+        mentor = CompanyMentor.objects.filter(user=user).first()
+        if not mentor:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only company mentors can access this endpoint.")
+        return mentor
+
+    def get(self, request):
+        mentor = self._get_mentor(request.user)
+        qs = FinalIndustryEvaluation.objects.filter(
+            company_mentor=mentor
+        ).select_related(
+            "internship__student__user",
+            "internship__position__company",
+        )
+
+        internship_id = request.query_params.get("internship_id")
+        if internship_id:
+            from core.models import Internship as InternshipRecord
+            # internship_id may be an InternshipApplication PK or an Internship PK
+            # Try both: first as Internship PK, then resolve via InternshipApplication
+            internship_pks = set()
+            # Direct Internship PK
+            if InternshipRecord.objects.filter(pk=internship_id).exists():
+                internship_pks.add(int(internship_id))
+            # Via InternshipApplication → find matching Internship records
+            app_internships = InternshipRecord.objects.filter(
+                student__applications__id=internship_id
+            ).values_list("pk", flat=True)
+            internship_pks.update(app_internships)
+
+            if internship_pks:
+                qs = qs.filter(internship_id__in=internship_pks)
+            else:
+                qs = qs.none()
+
+        serializer = FinalIndustryEvaluationSerializer(qs.distinct(), many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        mentor = self._get_mentor(request.user)
+
+        internship_id = (
+            request.data.get("internship")
+            or request.data.get("internship_id")
+            or request.data.get("application_id")
+        )
+        if not internship_id:
+            return Response(
+                {"error": "internship field is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from core.models import Internship as InternshipRecord
+        # Try direct Internship PK first
+        internship_record = InternshipRecord.objects.filter(pk=internship_id).first()
+
+        # If not found, resolve via InternshipApplication PK
+        if not internship_record:
+            internship_record = InternshipRecord.objects.filter(
+                student__applications__id=internship_id
+            ).order_by("-id").first()
+
+        # If still not found, try to find via student who has this application
+        if not internship_record:
+            try:
+                app = InternshipApplication.objects.get(pk=internship_id)
+                internship_record = InternshipRecord.objects.filter(
+                    student=app.student
+                ).order_by("-id").first()
+
+                # Legacy fallback: older records may not have had an execution row created.
+                # Accept any application that is coordinator-approved or student-accepted.
+                app_is_active = (
+                    app.student_decision == "ACCEPTED"
+                    or app.dept_status == "APPROVED"
+                    or app.mentor_status == "ACCEPTED"
+                )
+                if not internship_record and app_is_active:
+                    internship_record = InternshipRecord.objects.create(
+                        student=app.student,
+                        position=app.position,
+                        company=app.position.company,
+                        supervisor=app.supervisor,
+                        mentor=app.mentor,
+                        start_date=app.requested_start_date,
+                        end_date=app.requested_end_date,
+                        status="NOT_STARTED",
+                    )
+            except InternshipApplication.DoesNotExist:
+                pass
+
+        if not internship_record:
+            return Response(
+                {"error": "No internship execution record found for this application. The internship may not have started yet."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        form_data = request.data.get("form_data", {})
+        data = {**request.data, "internship": internship_record.pk}
+
+        existing = FinalIndustryEvaluation.objects.filter(
+            internship=internship_record
+        ).first()
+
+        if existing:
+            serializer = FinalIndustryEvaluationSerializer(
+                existing, data=data, partial=True,
+                context={"request": request}
+            )
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save(
+                status=CompanyEvaluationStatus.SUBMITTED,
+                form_data=form_data,
+            )
+            created = False
+        else:
+            serializer = FinalIndustryEvaluationSerializer(
+                data=data, context={"request": request}
+            )
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save(
+                company_mentor=mentor,
+                status=CompanyEvaluationStatus.SUBMITTED,
+                form_data=form_data,
+            )
+            created = True
+
+        from core.services.audit_service import log_audit_event
+        log_audit_event(
+            actor=request.user,
+            action="FINAL_EVAL_SUBMITTED",
+            target_type="FinalIndustryEvaluation",
+            target_id=instance.id,
+            description=(
+                f"Company mentor {request.user.email} {'submitted' if created else 'updated'} "
+                f"final evaluation for internship {internship_record.id}."
+            ),
+        )
+
+        return Response(
+            FinalIndustryEvaluationSerializer(instance).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Advisor: view examiner evaluations for assigned students
+# ---------------------------------------------------------------------------
+
+class AdvisorExaminerEvaluationsAPIView(APIView):
+    """
+    GET /api/evaluations/examiner/for-advisor/
+    Returns ExaminerEvaluation records for students assigned to the
+    authenticated advisor OR for a coordinator's department.
+    Optional: ?internship_id=<id> to filter to one student.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.models import Advisor, AdvisorAssignment
+
+        role = _role_name(request.user)
+        internship_id = request.query_params.get("internship_id")
+
+        # Coordinator: return evals for their department or a specific internship
+        if role == "COORDINATOR":
+            if internship_id:
+                qs = ExaminerEvaluation.objects.filter(
+                    internship_id=internship_id
+                )
+            else:
+                staff = getattr(request.user, "staff", None)
+                if not staff:
+                    return Response([])
+                qs = ExaminerEvaluation.objects.filter(
+                    internship__student__department=staff.department
+                )
+            qs = qs.select_related(
+                "internship__student__user",
+                "internship__position__company",
+                "examiner",
+            ).order_by("internship_id", "-submitted_at")
+            serializer = ExaminerEvaluationSerializer(qs, many=True)
+            return Response(serializer.data)
+
+        # Advisor: return evals for their assigned students
+        if role != "ADVISOR":
+            return Response(
+                {"detail": "Only advisors and coordinators can access this endpoint."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        advisor_profile = Advisor.objects.filter(user=request.user).first()
+        student_ids = []
+        if advisor_profile:
+            student_ids = list(
+                advisor_profile.assigned_students.values_list("id", flat=True)
+            )
+
+        assignment_internship_ids = AdvisorAssignment.objects.filter(
+            advisor=request.user, role="ADVISOR"
+        ).values_list("internship_id", flat=True)
+
+        # Also catch applications where the student's advisor field points to this advisor
+        if advisor_profile:
+            advisor_student_ids = list(
+                InternshipApplication.objects.filter(
+                    student__advisor=advisor_profile
+                ).values_list("student_id", flat=True)
+            )
+            student_ids = list(set(student_ids) | set(advisor_student_ids))
+
+        qs = ExaminerEvaluation.objects.filter(
+            models.Q(internship__student_id__in=student_ids) |
+            models.Q(internship_id__in=assignment_internship_ids)
+        ).select_related(
+            "internship__student__user",
+            "internship__position__company",
+            "examiner",
+        ).order_by("internship_id", "-submitted_at")
+
+        if internship_id:
+            qs = qs.filter(internship_id=internship_id)
+
+        serializer = ExaminerEvaluationSerializer(qs, many=True)
+        return Response(serializer.data)
