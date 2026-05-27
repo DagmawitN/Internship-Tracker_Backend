@@ -64,15 +64,36 @@ class CompanyRegistrationSerializer(serializers.ModelSerializer):
 class LoginSerializer(serializers.Serializer):
     email = serializers.CharField()
     password = serializers.CharField(write_only=True)
+    role = serializers.CharField(required=False, allow_blank=True)  # Selected role from frontend
 
     def validate(self, attrs):
         email = attrs.get("email")
         password = attrs.get("password")
+        selected_role = attrs.get("role", "").strip()
 
         user = authenticate(email=email, password=password)
 
         if not user:
             raise serializers.ValidationError("Invalid credentials")
+        
+        # If a role was selected, verify it matches the user's actual role
+        if selected_role:
+            # Map role names to match what's stored in the database
+            role_map = {
+                "Student": "STUDENT",
+                "Advisor": "ADVISOR",
+                "Coordinator": "COORDINATOR",
+                "Examiner": "EXAMINER",
+                "Company": "COMPANY",
+            }
+            
+            expected_role = role_map.get(selected_role)
+            actual_role = user.role.role_name if user.role else None
+            
+            if expected_role and expected_role != actual_role:
+                raise serializers.ValidationError(
+                    f"Invalid credentials for {selected_role} role. Your account is registered as {actual_role}."
+                )
        
         attrs["user"] = user
 

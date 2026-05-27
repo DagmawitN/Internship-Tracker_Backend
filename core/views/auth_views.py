@@ -37,9 +37,68 @@ from core.utils import send_otp_email, send_password_reset_email
 User = get_user_model()
 
 
-# Helper to generate JWT tokens
+# Helper to generate JWT tokens with department info
 def get_tokens_for_user(user):
     refresh = RefreshToken.for_user(user)
+    
+    # Add department information to token payload
+    # Check if user is a coordinator, advisor, examiner, or student
+    department_id = None
+    department_name = None
+    
+    try:
+        # Check if user is a Staff member (Coordinator/Examiner)
+        if hasattr(user, 'staff') and user.staff:
+            staff = user.staff
+            department_id = staff.department.id
+            department_name = staff.department.department_name
+        # Check if user is an Advisor
+        elif hasattr(user, 'advisor') and user.advisor:
+            advisor = user.advisor
+            department_id = advisor.department.id
+            department_name = advisor.department.department_name
+        # Check if user is a Student
+        elif getattr(user, 'student_profile', None):
+            student = user.student_profile
+            department_id = student.department.id if student.department else None
+            department_name = student.department.department_name if student.department else None
+            # student identifier (e.g., ETS1019/14)
+            student_identifier = student.student_id
+    except Exception as e:
+        # If any error occurs fetching department, continue without it
+        pass
+    
+    # Add department claims to token
+    refresh['department_id'] = department_id
+    refresh['department_name'] = department_name
+    refresh.access_token['department_id'] = department_id
+    refresh.access_token['department_name'] = department_name
+
+    # Add student identifier claim when available
+    if 'student_identifier' in locals() and student_identifier:
+        try:
+            refresh['student_id'] = student_identifier
+            refresh.access_token['student_id'] = student_identifier
+        except Exception:
+            pass
+
+    # Add company claims for company users so the frontend can use the company id
+    # directly when calling company-scoped internship endpoints.
+    company_id = None
+    company_name = None
+    try:
+        mentor = CompanyMentor.objects.filter(user=user).select_related("company").first()
+        if mentor:
+            company_id = mentor.company.id
+            company_name = mentor.company.company_name
+    except Exception:
+        pass
+
+    refresh['company_id'] = company_id
+    refresh['company_name'] = company_name
+    refresh.access_token['company_id'] = company_id
+    refresh.access_token['company_name'] = company_name
+    
     return {
         "refresh": str(refresh),
         "access": str(refresh.access_token),
@@ -88,7 +147,10 @@ class StudentRegisterView(generics.CreateAPIView):
         )
         user.set_password(user_data["password"])
         user.save()
-        Profile.objects.get_or_create(user=user)
+        Profile.objects.get_or_create(
+            user=user,
+            defaults={"full_name": user.get_full_name() or user.username},
+        )
         Student.objects.create(user=user, department=department, student_id=student_id)
         pre_reg.is_used = True
         pre_reg.save()
@@ -166,7 +228,10 @@ class CompanyRegisterView(generics.CreateAPIView):
         )
         user.set_password(user_data["password"])
         user.save()
-        Profile.objects.get_or_create(user=user)
+        Profile.objects.get_or_create(
+            user=user,
+            defaults={"full_name": user.get_full_name() or user.username},
+        )
 
         # create company record
         company = Company.objects.create(**company_data)
@@ -228,6 +293,7 @@ class LoginView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
 
         user = serializer.validated_data["user"]
+        mentor = CompanyMentor.objects.filter(user=user).select_related("company").first()
 
         # In production, require email verification before login
         if not settings.DEBUG and not user.is_verified:
@@ -236,12 +302,29 @@ class LoginView(generics.GenericAPIView):
             )
 
         tokens = get_tokens_for_user(user)
+        # Build user payload and include student info when present
+        user_payload = {
+            "id": user.id,
+            "email": user.email,
+            "role": user.role.role_name,
+            "company_id": mentor.company.id if mentor else None,
+            "company_name": mentor.company.company_name if mentor else None,
+        }
+        try:
+            if getattr(user, 'student_profile', None):
+                user_payload["student"] = {
+                    "student_id": user.student_profile.student_id,
+                    "department": user.student_profile.department.id if user.student_profile.department else None,
+                }
+        except Exception:
+            pass
 
         return Response(
             {
                 "user_id": user.id,
                 "email": user.email,
                 "role": user.role.role_name,
+                "user": user_payload,
                 "tokens": tokens,
             },
             status=status.HTTP_200_OK,
@@ -366,7 +449,10 @@ class StaffRegisterView(generics.CreateAPIView):
         )
         user.set_password(serializer.validated_data["password"])
         user.save()
-        Profile.objects.get_or_create(user=user)
+        Profile.objects.get_or_create(
+            user=user,
+            defaults={"full_name": user.get_full_name() or user.username},
+        )
 
         Staff.objects.create(
             user=user, department=pre_reg.department, name=pre_reg.name

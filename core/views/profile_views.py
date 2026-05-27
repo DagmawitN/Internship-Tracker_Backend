@@ -5,7 +5,7 @@ from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import cloudinary.uploader
 
-from core.models import Profile
+from core.models import CompanyMentor, Profile
 from rest_framework import serializers
 
 class MeUpdateSerializer(serializers.Serializer):
@@ -35,7 +35,10 @@ class MeView(APIView):
         user.save()
 
         # PROFILE UPDATE
-        profile, _ = Profile.objects.get_or_create(user=user)
+        profile, _ = Profile.objects.get_or_create(
+            user=user,
+            defaults={"full_name": user.get_full_name() or user.username},
+        )
         profile.bio = request.data.get("bio", profile.bio)
         profile.location = request.data.get("location", profile.location)
 
@@ -71,7 +74,10 @@ class MeView(APIView):
         """Reusable response builder"""
 
 
-        profile, _ = Profile.objects.get_or_create(user=user)
+        profile, _ = Profile.objects.get_or_create(
+            user=user,
+            defaults={"full_name": user.get_full_name() or user.username},
+        )
 
         avatar_url = None
         if profile.avatar:
@@ -101,6 +107,11 @@ class MeView(APIView):
                 "student_id": user.student_profile.student_id,
                 "department": user.student_profile.department.department_name
             }
+
+        mentor = CompanyMentor.objects.filter(user=user).select_related("company").first()
+        if mentor:
+            data["company_id"] = mentor.company_id
+            data["company_name"] = mentor.company.company_name
 
         if hasattr(user, "staff"):
             data["staff"] = {

@@ -5,13 +5,13 @@ from core.models import Advisor, Student
 
 class AssignAdvisorSerializer(serializers.Serializer):
     advisor_id = serializers.IntegerField(
-        help_text="PK of the Advisor record to assign"
+        help_text="User ID of the staff member to assign as advisor"
     )
 
 
 class AssignExaminerSerializer(serializers.Serializer):
     examiner_id = serializers.IntegerField(
-        help_text="PK of the Advisor record to assign as examiner"
+        help_text="User ID of the staff member to assign as examiner"
     )
 
 

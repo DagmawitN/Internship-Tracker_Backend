@@ -95,6 +95,39 @@ class Company(TimeStampedModel):
         return self.company_name
 
 
+class SelfPlacementRequest(TimeStampedModel):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", _("Pending")
+        APPROVED = "APPROVED", _("Approved")
+        REJECTED = "REJECTED", _("Rejected")
+
+    student = models.ForeignKey(
+        "Student", on_delete=models.CASCADE, related_name="self_placement_requests"
+    )
+    company_name = models.CharField(max_length=150)
+    representative_name = models.CharField(max_length=150, blank=True)
+    representative_email = models.EmailField()
+    representative_phone = models.CharField(max_length=20, blank=True)
+    location = models.CharField(max_length=200, blank=True)
+    company_license = models.FileField(upload_to="self_placement_licenses/")
+    additional_notes = models.TextField(blank=True)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reviewed_self_placements",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_notes = models.TextField(blank=True)
+
+    def __str__(self):
+        return f"{self.student} - {self.company_name} ({self.status})"
+
+
 class CompanyMentor(TimeStampedModel):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -266,6 +299,12 @@ class InternshipApplication(TimeStampedModel):
     )
     position = models.ForeignKey(
         InternshipPosition, on_delete=models.CASCADE, related_name="applications"
+    )
+    reason_for_joining = models.TextField(blank=True, default="")
+    cv_file = models.FileField(
+        upload_to="internship_applications/cvs/",
+        null=True,
+        blank=True,
     )
     supervisor = models.ForeignKey(
         Supervisor,
@@ -758,6 +797,8 @@ class ExaminerEvaluation(TimeStampedModel):
     comments = models.TextField(blank=True)
     total_score = models.PositiveIntegerField(default=0)
     weighted_score = models.DecimalField(max_digits=5, decimal_places=3, default=0)
+    # Stores the full granular form data (reportScores, presentationScores, finalMark, etc.)
+    form_data = models.JSONField(default=dict, blank=True)
 
     class Meta:
         verbose_name = "Examiner Evaluation"
@@ -916,6 +957,7 @@ class OverallInternshipEvaluation(TimeStampedModel):
 class PreRegisteredStudent(TimeStampedModel):
     name = models.CharField(max_length=100, unique=True)
     student_id = models.CharField(max_length=12, unique=True)
+    email = models.EmailField(blank=True, default="")
     department = models.ForeignKey(Department, on_delete=models.CASCADE)
     is_used = models.BooleanField(default=False)
 
@@ -938,6 +980,7 @@ class Staff(TimeStampedModel):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     department = models.ForeignKey(Department, on_delete=models.CASCADE)
     name = models.CharField(max_length=100)
+    is_assigned = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.name} ({self.user.email})"
@@ -949,6 +992,7 @@ class Profile(TimeStampedModel):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile"
     )
 
+    full_name = models.CharField(max_length=150, blank=True, default="")
     bio = models.TextField(blank=True)
     avatar = CloudinaryField("image", blank=True, null=True)
     location = models.CharField(max_length=255, blank=True)
@@ -1062,6 +1106,8 @@ class MonthlyIndustryEvaluation(TimeStampedModel):
     initiative_score = models.PositiveIntegerField(default=0)
     comments = models.TextField(blank=True)
     total_score = models.PositiveIntegerField(default=0)
+    # Full form data from the frontend (all section scores, labels, etc.)
+    form_data = models.JSONField(default=dict, blank=True)
 
     class Meta:
         verbose_name = "Monthly Industry Evaluation"
@@ -1152,6 +1198,8 @@ class FinalIndustryEvaluation(TimeStampedModel):
     overall_student_performance = models.DecimalField(
         max_digits=5, decimal_places=3, default=0
     )
+    # Full form data from the frontend
+    form_data = models.JSONField(default=dict, blank=True)
 
     class Meta:
         verbose_name = "Final Industry Evaluation"

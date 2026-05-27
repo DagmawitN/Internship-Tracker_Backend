@@ -8,12 +8,14 @@ from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.filters.internship_filters import InternshipFilter
 from core.models import (
     Attendance,
+    Company,
     CompanyMentor,
     Internship,
     InternshipApplication,
@@ -21,25 +23,74 @@ from core.models import (
     Staff,
     Supervisor,
 )
-from core.permissions import IsCompanyMentor, IsMentorOfCompany, IsStudentUser
+from core.permissions import IsCompanyMentor, IsCoordinatorUser, IsMentorOfCompany, IsStudentUser
 from core.serializers.internship_serializer import (
     InternshipApplicationSerializer,
     InternshipNotesSerializer,
     InternshipPositionSerializer,
     InternshipRecordSerializer,
+    InternshipRequestFormSerializer,
     StudentApplicationSerializer,
 )
+from core.serializers.company_serializer import CompanyApplicationSerializer
 from core.services.notification_service import create_notification
 
 
 def _internship_role(user):
     """Return the user's role_name or None."""
-    return getattr(user.role, "role_name", None) if user.role else None
+    role = getattr(user, "role", None)
+    if not role:
+        return None
+    if isinstance(role, str):
+        return role.strip().upper()
+    role_name = getattr(role, "role_name", None)
+    return str(role_name).strip().upper() if role_name else None
+
+
+def _company_for_user(user):
+    mentor = CompanyMentor.objects.filter(user=user).select_related("company").first()
+    if mentor:
+        return mentor.company
+
+    if str(_internship_role(user)).upper() == "COMPANY":
+        company = Company.objects.filter(
+            contact_email=user.email, is_active=True
+        ).first()
+        if company:
+            return company
+
+        mentor_by_company_email = (
+            CompanyMentor.objects.filter(company__contact_email=user.email)
+            .select_related("company")
+            .first()
+        )
+        if mentor_by_company_email:
+            return mentor_by_company_email.company
+
+    return None
+
+
+def _require_company_user_id(user, company_id):
+    if not user or not user.is_authenticated:
+        raise PermissionDenied("Authentication required")
+
+    company = _company_for_user(user)
+    if not company:
+        raise PermissionDenied("Only company users can manage internships")
+
+    if str(company.id) != str(company_id):
+        raise PermissionDenied("You can only manage internships for your own company")
+
+    if _internship_role(user) != "COMPANY":
+        raise PermissionDenied("Only company users can manage internships")
+
+    return company
 
 
 class InternshipApplicationCreateView(generics.CreateAPIView):
     serializer_class = InternshipApplicationSerializer
     permission_classes = [IsAuthenticated, IsStudentUser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
         return InternshipApplication.objects.filter(
@@ -129,7 +180,15 @@ class InternshipListCreateView(generics.ListCreateAPIView):
     queryset = InternshipPosition.objects.all()
 
     def get_queryset(self):
-        return InternshipPosition.objects.filter(is_active=True).annotate(
+        queryset = InternshipPosition.objects.filter(is_active=True)
+        role = _internship_role(self.request.user)
+        if role == "COMPANY":
+            company = _company_for_user(self.request.user)
+            if not company:
+                return InternshipPosition.objects.none()
+            queryset = queryset.filter(company=company)
+
+        return queryset.annotate(
             accepted_applications=Count(
                 "applications",
                 filter=Q(applications__student_decision="ACCEPTED"),
@@ -138,11 +197,31 @@ class InternshipListCreateView(generics.ListCreateAPIView):
         )
 
     def perform_create(self, serializer):
-        if not CompanyMentor.objects.filter(user=self.request.user).exists():
-            raise PermissionDenied("Only company mentors can create internships")
+        company = _company_for_user(self.request.user)
+        role = _internship_role(self.request.user)
+        if not company:
+            # If the authenticated user has a Company role, allow creation by
+            # creating a minimal Company record and linking the user as mentor.
+            if role == "COMPANY":
+                company_name = (
+                    getattr(self.request.user, "company_name", None)
+                    or getattr(self.request.user, "company", None)
+                    or self.request.user.email
+                )
+                company = Company.objects.create(
+                    contact_email=self.request.user.email,
+                    company_name=company_name,
+                    is_active=True,
+                )
+                try:
+                    CompanyMentor.objects.create(user=self.request.user, company=company)
+                except Exception:
+                    # Ignore mentor creation errors (e.g., unique constraint); proceed with company
+                    pass
+            else:
+                raise PermissionDenied("Only company users can create internships")
 
-        mentor = CompanyMentor.objects.get(user=self.request.user)
-        position = serializer.save(company=mentor.company)
+        position = serializer.save(company=company)
 
         from core.services.audit_service import log_audit_event
 
@@ -151,23 +230,66 @@ class InternshipListCreateView(generics.ListCreateAPIView):
             action="INTERNSHIP_POSITION_CREATED",
             target_type="InternshipPosition",
             target_id=position.id,
-            description=f"Position '{position.title}' created for {mentor.company.company_name}.",
+            description=f"Position '{position.title}' created for {company.company_name}.",
         )
 
 
-class InternshipRetrieveUpdateView(generics.RetrieveUpdateAPIView):
+class CompanyUserInternshipListCreateView(InternshipListCreateView):
+    def get_queryset(self):
+        _require_company_user_id(self.request.user, self.kwargs["user_id"])
+        return super().get_queryset()
+
+    def post(self, request, *args, **kwargs):
+        _require_company_user_id(request.user, kwargs["user_id"])
+
+        internship_id = request.data.get("internship_id")
+        if internship_id:
+            position = get_object_or_404(InternshipPosition, pk=internship_id)
+            company = _company_for_user(request.user)
+            if not company or position.company_id != company.id:
+                raise PermissionDenied("You can only view applicants for your own internships.")
+
+            queryset = InternshipApplication.objects.filter(position=position)
+            dept_status = request.data.get("dept_status")
+            mentor_status = request.data.get("mentor_status")
+            student_decision = request.data.get("student_decision")
+
+            if dept_status:
+                queryset = queryset.filter(dept_status=str(dept_status).strip().upper())
+            if mentor_status:
+                queryset = queryset.filter(mentor_status=str(mentor_status).strip().upper())
+            if student_decision:
+                queryset = queryset.filter(student_decision=str(student_decision).strip().upper())
+
+            serializer = CompanyApplicationSerializer(queryset, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        return super().post(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        _require_company_user_id(self.request.user, self.kwargs["user_id"])
+        return super().perform_create(serializer)
+
+
+class CompanyUserInternshipRetrieveUpdateView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = InternshipPositionSerializer
     permission_classes = [IsAuthenticated]
     queryset = InternshipPosition.objects.all()
 
-    def perform_update(self, serializer):
-        mentor = CompanyMentor.objects.filter(user=self.request.user).first()
-        if not mentor:
-            raise PermissionDenied(
-                "Only company mentors can update internship positions"
-            )
+    def get_queryset(self):
+        _require_company_user_id(self.request.user, self.kwargs["user_id"])
+        company = _company_for_user(self.request.user)
+        if not company:
+            return InternshipPosition.objects.none()
+        return InternshipPosition.objects.filter(company=company)
 
-        if serializer.instance.company != mentor.company:
+    def perform_update(self, serializer):
+        _require_company_user_id(self.request.user, self.kwargs["user_id"])
+        company = _company_for_user(self.request.user)
+        if not company:
+            raise PermissionDenied("Only company users can update internship positions")
+
+        if serializer.instance.company != company:
             raise PermissionDenied("You cannot update internships from another company")
 
         position = serializer.save()
@@ -182,14 +304,87 @@ class InternshipRetrieveUpdateView(generics.RetrieveUpdateAPIView):
             description=f"Position '{position.title}' updated by {self.request.user.email}.",
         )
 
+    def perform_destroy(self, instance):
+        _require_company_user_id(self.request.user, self.kwargs["user_id"])
+        company = _company_for_user(self.request.user)
+        if not company:
+            raise PermissionDenied("Only company users can delete internship positions")
+
+        if instance.company != company:
+            raise PermissionDenied("You cannot delete internships from another company")
+
+        from core.services.audit_service import log_audit_event
+
+        log_audit_event(
+            actor=self.request.user,
+            action="INTERNSHIP_POSITION_DELETED",
+            target_type="InternshipPosition",
+            target_id=instance.id,
+            description=f"Position '{instance.title}' deleted by {self.request.user.email}.",
+        )
+        instance.delete()
+
+
+class InternshipRetrieveUpdateView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = InternshipPositionSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = InternshipPosition.objects.all()
+
+    def perform_update(self, serializer):
+        company = _company_for_user(self.request.user)
+        if not company:
+            raise PermissionDenied("Only company users can update internship positions")
+
+        if serializer.instance.company != company:
+            raise PermissionDenied("You cannot update internships from another company")
+
+        position = serializer.save()
+
+        from core.services.audit_service import log_audit_event
+
+        log_audit_event(
+            actor=self.request.user,
+            action="INTERNSHIP_POSITION_UPDATED",
+            target_type="InternshipPosition",
+            target_id=position.id,
+            description=f"Position '{position.title}' updated by {self.request.user.email}.",
+        )
+
+    def perform_destroy(self, instance):
+        company = _company_for_user(self.request.user)
+        if not company:
+            raise PermissionDenied("Only company users can delete internship positions")
+
+        if instance.company != company:
+            raise PermissionDenied("You cannot delete internships from another company")
+
+        from core.services.audit_service import log_audit_event
+
+        log_audit_event(
+            actor=self.request.user,
+            action="INTERNSHIP_POSITION_DELETED",
+            target_type="InternshipPosition",
+            target_id=instance.id,
+            description=f"Position '{instance.title}' deleted by {self.request.user.email}.",
+        )
+        instance.delete()
+
 
 class AvailableInternshipPositionListView(generics.ListAPIView):
     serializer_class = InternshipPositionSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        queryset = InternshipPosition.objects.filter(is_active=True)
+        role = _internship_role(self.request.user)
+        if role == "COMPANY":
+            mentor = CompanyMentor.objects.filter(user=self.request.user).first()
+            if not mentor:
+                return InternshipPosition.objects.none()
+            queryset = queryset.filter(company=mentor.company)
+
         return (
-            InternshipPosition.objects.filter(is_active=True)
+            queryset
             .annotate(
                 accepted_applications=Count(
                     "applications",
@@ -252,10 +447,10 @@ class InternshipRecordListView(generics.ListAPIView):
             return base_qs.filter(student__advisor__user=user)
 
         if role == "COMPANY":
-            mentor = CompanyMentor.objects.filter(user=user).first()
-            if not mentor:
+            company = _company_for_user(user)
+            if not company:
                 return base_qs.none()
-            return base_qs.filter(company=mentor.company)
+            return base_qs.filter(company=company)
 
         if role == "COORDINATOR":
             staff = getattr(user, "staff", None)
@@ -440,3 +635,146 @@ class StudentApplicationsListView(generics.ListAPIView):
             )
             .order_by("-created_at")
         )
+
+
+class CoordinatorPendingApplicationsListView(generics.ListAPIView):
+    """GET /applications/ — pending applications for the coordinator's department."""
+
+    serializer_class = InternshipRequestFormSerializer
+    permission_classes = [IsAuthenticated, IsCoordinatorUser]
+
+    def get_queryset(self):
+        user = self.request.user
+        coordinator = getattr(user, "staff", None)
+        if not coordinator:
+            return InternshipApplication.objects.none()
+
+        return (
+            InternshipApplication.objects.filter(
+                student__department=coordinator.department,
+                dept_status=InternshipApplication.DeptStatus.PENDING,
+            )
+            .select_related(
+                "student__user",
+                "student__department",
+                "student__advisor__user",
+                "position",
+                "position__company",
+                "advisor__user",
+            )
+            .order_by("-created_at")
+        )
+
+
+class CoordinatorApprovedApplicationsListView(generics.ListAPIView):
+    """GET /applications/approved/ — applications that have been approved by the department and are visible to coordinators."""
+
+    serializer_class = InternshipRequestFormSerializer
+    permission_classes = [IsAuthenticated, IsCoordinatorUser]
+
+    def get_queryset(self):
+        user = self.request.user
+        coordinator = getattr(user, "staff", None)
+        if not coordinator:
+            return InternshipApplication.objects.none()
+
+        return (
+            InternshipApplication.objects.filter(
+                student__department=coordinator.department,
+                dept_status=InternshipApplication.DeptStatus.APPROVED,
+            )
+            .select_related(
+                "student__user",
+                "student__department",
+                "student__advisor__user",
+                "position",
+                "position__company",
+                "advisor__user",
+            )
+            .order_by("-created_at")
+        )
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+
+        items = response.data if isinstance(response.data, list) else response.data.get("results", [])
+        if not items:
+            return response
+
+        app_ids = [item["id"] for item in items if item.get("id")]
+        from core.models import AdvisorAssignment
+        examiner_assignments = (
+            AdvisorAssignment.objects.filter(
+                internship_id__in=app_ids,
+                role="EXAMINER",
+            )
+            .select_related("advisor")
+            .order_by("internship_id", "id")
+        )
+
+        examiner_map = {}
+        for assignment in examiner_assignments:
+            iid = assignment.internship_id
+            name = assignment.advisor.get_full_name() or assignment.advisor.username
+            if iid not in examiner_map:
+                examiner_map[iid] = []
+            examiner_map[iid].append(name)
+
+        for item in items:
+            iid = item.get("id")
+            names = examiner_map.get(iid, [])
+            item["examiner_name"] = names[0] if len(names) > 0 else ""
+            item["examiner2_name"] = names[1] if len(names) > 1 else ""
+
+        return response
+
+
+class ApplicationDetailView(generics.RetrieveAPIView):
+    """GET /applications/<pk>/ — return a single application if requester is authorized.
+
+    Allowed viewers:
+      - The student who owns the application
+      - A coordinator for the student's department
+      - An advisor assigned to the application
+      - A company mentor for the position's company
+    """
+    serializer_class = InternshipRequestFormSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return (
+            InternshipApplication.objects.select_related(
+                "student__user",
+                "student__department",
+                "position",
+                "position__company",
+                "advisor__user",
+                "mentor__user",
+            )
+        )
+
+    def get_object(self):
+        obj = super().get_object()
+        user = self.request.user
+
+        # student owner
+        if getattr(user, "student_profile", None) and obj.student == user.student_profile:
+            return obj
+
+        # coordinator of same department
+        coord = getattr(user, "staff", None)
+        if coord and coord.department_id == obj.student.department_id:
+            return obj
+
+        # advisor assigned
+        if getattr(user, "advisor_profile", None) and obj.advisor and obj.advisor.user_id == user.id:
+            return obj
+
+        # company mentor
+        if getattr(user, "company_mentorships", None):
+            if obj.position and obj.position.company_id:
+                mentor_exists = obj.position.company.mentor and obj.position.company.mentor.user_id == user.id
+                if mentor_exists:
+                    return obj
+
+        raise PermissionDenied("Not authorized to view this application")

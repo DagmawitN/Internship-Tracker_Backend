@@ -1,9 +1,23 @@
 from rest_framework import serializers
+import os
+
+from rest_framework import serializers
 
 from core.models import Internship, InternshipApplication, InternshipPosition, Skill
 
 
+ALLOWED_APPLICATION_CV_EXTENSIONS = {".pdf", ".doc", ".docx"}
+ALLOWED_APPLICATION_CV_MIME_TYPES = {
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
 class InternshipApplicationSerializer(serializers.ModelSerializer):
+    student_id = serializers.CharField(write_only=True, required=False, allow_blank=False)
+    reason_for_joining = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    cv_file = serializers.FileField(required=True, allow_empty_file=False)
     requested_start_date = serializers.DateField(required=False, allow_null=True)
     requested_end_date = serializers.DateField(required=False, allow_null=True)
     working_days_per_week = serializers.IntegerField(
@@ -17,7 +31,10 @@ class InternshipApplicationSerializer(serializers.ModelSerializer):
         model = InternshipApplication
         fields = [
             "id",
+            "student_id",
             "position",
+            "reason_for_joining",
+            "cv_file",
             "dept_status",
             "mentor_status",
             "student_decision",
@@ -40,10 +57,39 @@ class InternshipApplicationSerializer(serializers.ModelSerializer):
         request = self.context["request"]
         user = request.user
 
+        submitted_student_id = attrs.pop("student_id", None)
+
         try:
             student = user.student_profile
-        except:
-            raise serializers.ValidationError("User is not a student.")
+        except Exception:
+            raise serializers.ValidationError({"student_id": "User is not a student."})
+
+        if submitted_student_id and submitted_student_id != student.student_id:
+            raise serializers.ValidationError({
+                "student_id": "The provided student_id does not match the authenticated student."
+            })
+
+        cv_file = attrs.get("cv_file")
+        if cv_file is None:
+            raise serializers.ValidationError({"cv_file": "CV file is required."})
+
+        ext = os.path.splitext(cv_file.name)[1].lower()
+        if ext not in ALLOWED_APPLICATION_CV_EXTENSIONS:
+            raise serializers.ValidationError(
+                {"cv_file": "Only PDF, DOC, and DOCX files are allowed."}
+            )
+
+        content_type = getattr(cv_file, "content_type", None)
+        if content_type and content_type not in ALLOWED_APPLICATION_CV_MIME_TYPES:
+            raise serializers.ValidationError(
+                {"cv_file": "Unsupported CV file type."}
+            )
+
+        max_bytes = 5 * 1024 * 1024
+        if getattr(cv_file, "size", 0) > max_bytes:
+            raise serializers.ValidationError(
+                {"cv_file": "CV file too large. Maximum size is 5 MB."}
+            )
 
         attrs["student"] = student
 
@@ -62,9 +108,16 @@ class SkillSerializer(serializers.ModelSerializer):
         fields = ["id", "name"]
 
 
+class RequiredSkillsField(serializers.ListField):
+    def to_representation(self, value):
+        if hasattr(value, "all"):
+            value = value.all()
+        return [getattr(item, "name", str(item)) for item in value or []]
+
+
 class InternshipPositionSerializer(serializers.ModelSerializer):
-    required_skills = serializers.PrimaryKeyRelatedField(
-        queryset=Skill.objects.all(), many=True, required=False
+    required_skills = RequiredSkillsField(
+        child=serializers.CharField(), required=False
     )
     accepted_applications = serializers.IntegerField(read_only=True)
     available_slots = serializers.SerializerMethodField()
@@ -79,6 +132,36 @@ class InternshipPositionSerializer(serializers.ModelSerializer):
             return None
         accepted = getattr(obj, "accepted_applications", 0) or 0
         return max(obj.max_applicants - accepted, 0)
+
+    def _resolve_required_skills(self, values):
+        skills = []
+        for value in values or []:
+            if value is None:
+                continue
+            raw_value = str(value).strip()
+            if not raw_value:
+                continue
+            if raw_value.isdigit():
+                skill = Skill.objects.filter(pk=int(raw_value)).first()
+                if skill:
+                    skills.append(skill)
+                continue
+            skill, _ = Skill.objects.get_or_create(name=raw_value)
+            skills.append(skill)
+        return skills
+
+    def create(self, validated_data):
+        required_skills = validated_data.pop("required_skills", [])
+        instance = super().create(validated_data)
+        instance.required_skills.set(self._resolve_required_skills(required_skills))
+        return instance
+
+    def update(self, instance, validated_data):
+        required_skills = validated_data.pop("required_skills", None)
+        instance = super().update(instance, validated_data)
+        if required_skills is not None:
+            instance.required_skills.set(self._resolve_required_skills(required_skills))
+        return instance
 
     def validate_working_days(self, value):
         valid = {
@@ -233,8 +316,12 @@ class StudentApplicationSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_advisor_name(self, obj):
+        # Check application-level advisor first, then fall back to student-level advisor
         if obj.advisor and obj.advisor.user:
             u = obj.advisor.user
+            return u.get_full_name().strip() or u.username
+        if obj.student.advisor and obj.student.advisor.user:
+            u = obj.student.advisor.user
             return u.get_full_name().strip() or u.username
         return None
 
@@ -262,6 +349,7 @@ class InternshipRequestFormSerializer(serializers.ModelSerializer):
     overall_status = serializers.CharField(read_only=True)
     student_name = serializers.SerializerMethodField()
     student_email = serializers.EmailField(source="student.user.email", read_only=True)
+    student_user_id = serializers.IntegerField(source="student.user.id", read_only=True)
     resume_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -270,6 +358,7 @@ class InternshipRequestFormSerializer(serializers.ModelSerializer):
             "id",
             "student_name",
             "student_email",
+            "student_user_id",
             "position_title",
             "company_name",
             "work_mode",
