@@ -126,6 +126,19 @@ def parse_cv(cv_text: str) -> dict:
     """
     model = get_gemini_client()
 
+    empty_cv_data = {
+        "name": "",
+        "email": "",
+        "phone": "",
+        "education": [],
+        "experience": [],
+        "skills": [],
+        "technologies": [],
+        "certifications": [],
+        "projects": [],
+        "languages": [],
+    }
+
     prompt = f"""Analyze the following CV text and extract structured information.
 
 Return ONLY valid JSON with this exact structure:
@@ -166,9 +179,12 @@ Return ONLY the JSON object, no markdown, no explanation."""
         # Try to extract JSON from response
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         if match:
-            data = json.loads(match.group())
+            try:
+                data = json.loads(match.group())
+            except json.JSONDecodeError:
+                return empty_cv_data
         else:
-            data = {"skills": [], "technologies": [], "education": [], "experience": []}
+            return empty_cv_data
 
     # Normalize all skills
     all_skills = list(set(
@@ -177,5 +193,8 @@ Return ONLY the JSON object, no markdown, no explanation."""
     ))
     data["skills"] = all_skills
     data["technologies"] = all_skills
+
+    for key, default_value in empty_cv_data.items():
+        data.setdefault(key, default_value)
 
     return data
