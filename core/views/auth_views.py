@@ -434,6 +434,13 @@ class StaffRegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         pre_reg = serializer.validated_data["pre_reg"]
 
+        department = getattr(pre_reg, "department", None)
+        if not department:
+            return Response(
+                {"error": "This pre-registered staff record is missing a department."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Prevent duplicate email registrations with a clear error response
         email = serializer.validated_data.get("email")
         if email and User.objects.filter(email=email).exists():
@@ -462,9 +469,7 @@ class StaffRegisterView(generics.CreateAPIView):
             defaults={"full_name": user.get_full_name() or user.username},
         )
 
-        Staff.objects.create(
-            user=user, department=pre_reg.department, name=pre_reg.name
-        )
+        Staff.objects.create(user=user, department=department, name=pre_reg.name)
 
         pre_reg.is_used = True
         pre_reg.save()
