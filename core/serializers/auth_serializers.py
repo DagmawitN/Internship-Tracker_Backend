@@ -114,6 +114,13 @@ class StaffRegistrationSerializer(serializers.Serializer):
         pre_reg = PreRegisteredStaff.objects.filter(email__iexact=email,is_used=False).first()
         if not pre_reg:
             raise serializers.ValidationError("This staff is not pre-registered or already used.")
+        # Check for existing user by email
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError("A user with that email already exists.")
+        # Check for existing username to avoid IntegrityError on create
+        username = attrs.get("username")
+        if username and User.objects.filter(username__iexact=username).exists():
+            raise serializers.ValidationError("This username is already taken. Please choose a different username.")
         attrs['pre_reg'] = pre_reg
         return attrs
     

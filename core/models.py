@@ -248,6 +248,17 @@ class InternshipPosition(TimeStampedModel):
     )
     daily_start_time = models.TimeField(null=True, blank=True)
     daily_end_time = models.TimeField(null=True, blank=True)
+    # Optional runtime schedule / posting window
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+
+    # Human-friendly aggregate fields useful for listings
+    total_hours = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    days_in_week = models.PositiveIntegerField(null=True, blank=True)
+    number_interns = models.PositiveIntegerField(null=True, blank=True)
+    # Display / targeting fields used by frontend
+    department = models.CharField(max_length=150, blank=True)
+    location = models.CharField(max_length=255, blank=True)
 
     # Work mode
     work_mode = models.CharField(

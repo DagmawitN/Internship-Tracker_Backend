@@ -96,6 +96,7 @@ if _has_module("drf_spectacular"):
     INSTALLED_APPS.append("drf_spectacular")
 if _has_module("corsheaders"):
     INSTALLED_APPS.append("corsheaders")
+INSTALLED_APPS.append("rag_assistant")
 if _has_module("cloudinary"):
     INSTALLED_APPS.append("cloudinary")
 if _has_module("cloudinary_storage"):
@@ -170,17 +171,17 @@ else:
     }
 
 
-# def _log_database_connection_status() -> None:
-#     database_config = DATABASES.get("default", {})
-#     print("[DB] DATABASE_URL loaded:", bool(DATABASE_URL), flush=True)
-#     print("[DB] ENGINE:", database_config.get("ENGINE"), flush=True)
-#     print("[DB] NAME:", database_config.get("NAME"), flush=True)
-#     print("[DB] HOST:", database_config.get("HOST"), flush=True)
-#     print("[DB] Skipping startup connection test to avoid blocking runserver.", flush=True)
+def _log_database_connection_status() -> None:
+    database_config = DATABASES.get("default", {})
+    print("[DB] DATABASE_URL loaded:", bool(DATABASE_URL), flush=True)
+    print("[DB] ENGINE:", database_config.get("ENGINE"), flush=True)
+    print("[DB] NAME:", database_config.get("NAME"), flush=True)
+    print("[DB] HOST:", database_config.get("HOST"), flush=True)
+    print("[DB] Skipping startup connection test to avoid blocking runserver.", flush=True)
 
 
-# if DEBUG and os.environ.get("RUN_MAIN") == "true":
-#     _log_database_connection_status()
+if DEBUG and os.environ.get("RUN_MAIN") == "true":
+    _log_database_connection_status()
 
 
 # Password validation
@@ -258,12 +259,8 @@ CLOUDINARY_STORAGE = {
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(days=3),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
-    "ROTATE_REFRESH_TOKENS": True,
-    "BLACKLIST_AFTER_ROTATION": True,
-    "UPDATE_LAST_LOGIN": True,
-    "AUTH_HEADER_TYPES": ("Bearer",),
+    "ACCESS_TOKEN_LIFETIME": timedelta(hours=6), 
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
 }
 EMAIL_TIMEOUT = 10
 EMAIL_USE_LOCALTIME = False

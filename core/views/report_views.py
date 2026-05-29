@@ -158,11 +158,36 @@ class ExaminerInternshipDocumentListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        internship_ids = list(
-            AdvisorAssignment.objects.filter(advisor=request.user, role="EXAMINER")
-            .values_list("internship_id", flat=True)
-            .distinct()
-        )
+        role_name = str(getattr(getattr(request.user, "role", None), "role_name", "")).upper()
+        staff = getattr(request.user, "staff", None)
+
+        internship_ids = []
+
+        # Coordinator: department-scoped visibility for dashboard review.
+        if role_name == "COORDINATOR" and staff and staff.department_id:
+            internship_ids = list(
+                InternshipApplication.objects.filter(
+                    student__department_id=staff.department_id
+                ).values_list("id", flat=True)
+            )
+        # Advisor: allow visibility to documents for assigned internships.
+        elif role_name == "ADVISOR":
+            internship_ids = list(
+                AdvisorAssignment.objects.filter(advisor=request.user, role="ADVISOR")
+                .values_list("internship_id", flat=True)
+                .distinct()
+            )
+            if not internship_ids:
+                internship_ids = list(
+                    advisor_internship_queryset(request.user).values_list("id", flat=True)
+                )
+        # Examiner: default endpoint behavior.
+        else:
+            internship_ids = list(
+                AdvisorAssignment.objects.filter(advisor=request.user, role="EXAMINER")
+                .values_list("internship_id", flat=True)
+                .distinct()
+            )
 
         internship_id = request.query_params.get("internship_id")
         if internship_id:
@@ -358,7 +383,12 @@ class CreateWeeklyLogbookAPIView(APIView):
         ).prefetch_related("daily_entries")
 
         if student_id:
-            student_qs = Student.objects.filter(models.Q(student_id=str(student_id)) | models.Q(pk=student_id))
+            student_id_str = str(student_id).strip()
+            student_lookup = models.Q(student_id=student_id_str)
+            if student_id_str.isdigit():
+                student_lookup |= models.Q(pk=int(student_id_str))
+
+            student_qs = Student.objects.filter(student_lookup)
             target_student = student_qs.select_related("department", "user").first()
             if not target_student:
                 return Response([], status=status.HTTP_200_OK)
@@ -648,6 +678,9 @@ class AdvisorWeeklyLogbookListAPIView(APIView):
     def get(self, request):
         from core.models import Advisor
         # Allow access if user has ADVISOR role, an AdvisorAssignment, or an Advisor profile
+        role_name = str(getattr(getattr(request.user, "role", None), "role_name", "")).upper()
+        staff = getattr(request.user, "staff", None)
+        is_coordinator = role_name == "COORDINATOR"
         has_advisor_role = (
             hasattr(request.user, "role")
             and request.user.role
@@ -656,9 +689,9 @@ class AdvisorWeeklyLogbookListAPIView(APIView):
         advisor_profile = Advisor.objects.filter(user=request.user).first()
         has_advisor_assignment = AdvisorAssignment.objects.filter(advisor=request.user).exists()
 
-        if not (has_advisor_role or advisor_profile or has_advisor_assignment):
+        if not (is_coordinator or has_advisor_role or advisor_profile or has_advisor_assignment):
             return Response(
-                {"error": "Only advisors can access this endpoint."},
+                {"error": "Only advisors and coordinators can access this endpoint."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -683,11 +716,18 @@ class AdvisorWeeklyLogbookListAPIView(APIView):
             )
             student_ids = list(set(m2m_ids) | set(fk_ids))
 
-        # Combine both paths
-        qs = WeeklyLogbook.objects.filter(
-            models.Q(internship_id__in=assignment_ids) |
-            models.Q(internship__student_id__in=student_ids)
-        ).select_related(
+        # Coordinator: all department logbooks. Advisor: assigned students only.
+        if is_coordinator and staff and staff.department_id:
+            qs = WeeklyLogbook.objects.filter(
+                internship__student__department_id=staff.department_id
+            )
+        else:
+            qs = WeeklyLogbook.objects.filter(
+                models.Q(internship_id__in=assignment_ids) |
+                models.Q(internship__student_id__in=student_ids)
+            )
+
+        qs = qs.select_related(
             "internship__student__user",
             "internship__position__company",
         ).prefetch_related("daily_entries")
@@ -714,7 +754,7 @@ class StudentWeeklyLogbookListAPIView(APIView):
         if not hasattr(request.user, "student_profile"):
             return Response({"error": "Only students can access this endpoint."}, status=status.HTTP_403_FORBIDDEN)
 
-        student = request.user.student_profile
+        student = request.user.id and request.user.student_profile
         internship_id = request.query_params.get("internship_id")
         internship_qs = InternshipApplication.objects.filter(student=student).filter(
             models.Q(student_decision="ACCEPTED") | models.Q(dept_status="APPROVED")

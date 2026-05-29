@@ -199,8 +199,10 @@ def process_mentor_review(
     ------
     ValueError for invalid state or missing rejection_reason.
     """
-    if application.dept_status != "APPROVED":
-        raise ValueError("Application has not been approved by the coordinator yet.")
+    # Allow mentor to act even if the coordinator has not yet approved (mentor-first flow).
+    # Only prevent mentor actions when coordinator has explicitly rejected the application.
+    if application.dept_status == "REJECTED":
+        raise ValueError("Application has been rejected by the coordinator.")
 
     if application.mentor_status not in (None, "PENDING"):
         raise ValueError("Application has already been reviewed by the mentor.")

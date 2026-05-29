@@ -12,6 +12,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 urlpatterns = [
     path('admin/', admin.site.urls),
     path("api/", include("core.urls")),
+    path("api/assistant/", include("rag_assistant.urls")),
     # JWT token refresh — used by the frontend interceptor
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token-refresh"),
     # OpenAPI schema

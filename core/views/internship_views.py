@@ -16,10 +16,12 @@ from core.filters.internship_filters import InternshipFilter
 from core.models import (
     Attendance,
     Company,
+    CompanyEvaluationStatus,
     CompanyMentor,
     Internship,
     InternshipApplication,
     InternshipPosition,
+    SelfPlacementRequest,
     Staff,
     Supervisor,
 )
@@ -33,6 +35,7 @@ from core.serializers.internship_serializer import (
     StudentApplicationSerializer,
 )
 from core.serializers.company_serializer import CompanyApplicationSerializer
+from core.serializers.self_placement_serializer import SelfPlacementRequestSerializer
 from core.services.notification_service import create_notification
 
 
@@ -85,6 +88,114 @@ def _require_company_user_id(user, company_id):
         raise PermissionDenied("Only company users can manage internships")
 
     return company
+
+
+def _sync_application_advisor_status_from_final_eval(application):
+    """Best-effort sync so application advisor_status reflects final company evaluation state."""
+    if not application or application.advisor_status != "PENDING":
+        return application
+
+    internship = (
+        Internship.objects.filter(
+            student=application.student,
+            position=application.position,
+        )
+        .select_related("final_industry_evaluation")
+        .order_by("-id")
+        .first()
+    )
+    if not internship:
+        return application
+
+    final_eval = getattr(internship, "final_industry_evaluation", None)
+    if not final_eval:
+        return application
+
+    if final_eval.status == CompanyEvaluationStatus.ADVISOR_APPROVED:
+        application.advisor_status = "APPROVED"
+    elif final_eval.status == CompanyEvaluationStatus.REJECTED:
+        application.advisor_status = "REJECTED"
+    else:
+        return application
+
+    update_fields = ["advisor_status"]
+    if not application.advisor_id and getattr(application.student, "advisor_id", None):
+        application.advisor_id = application.student.advisor_id
+        update_fields.append("advisor")
+
+    application.save(update_fields=update_fields)
+    return application
+
+
+def _self_placement_to_application_like(request_obj):
+    serializer = SelfPlacementRequestSerializer(request_obj)
+    data = serializer.data
+    student = request_obj.student
+    student_user = student.user
+    advisor_user = student.advisor.user if getattr(student, "advisor", None) and student.advisor.user else None
+
+    return {
+        "id": request_obj.id,
+        "student_name": data.get("student_name") or student_user.get_full_name().strip() or student_user.username,
+        "student_email": student_user.email,
+        "student_user_id": student_user.id,
+        "student_id": data.get("student_id") or student.student_id,
+        "position_title": "Self Placement",
+        "company_name": request_obj.company_name,
+        "company_id": None,
+        "work_mode": "SELF_PLACEMENT",
+        "overall_status": request_obj.status,
+        "dept_status": request_obj.status,
+        "mentor_status": None,
+        "advisor_status": "APPROVED" if request_obj.status == SelfPlacementRequest.Status.APPROVED else "PENDING",
+        "student_decision": "PENDING",
+        "rejection_reason": request_obj.review_notes or "",
+        "requested_start_date": None,
+        "requested_end_date": None,
+        "working_days_per_week": None,
+        "working_hours_per_day": None,
+        "coordinator_signature": "",
+        "coordinator_signed_at": request_obj.reviewed_at,
+        "mentor_signature": "",
+        "mentor_signed_at": None,
+        "form_snapshot": {
+            "student": {
+                "name": data.get("student_name") or student_user.get_full_name().strip() or student_user.username,
+                "student_id": student.student_id,
+                "email": student_user.email,
+                "department": student.department.department_name if student.department else "",
+                "statement": request_obj.additional_notes or "",
+                "resume_url": student.resume.url if getattr(student, "resume", None) else "",
+            },
+            "company": {
+                "name": request_obj.company_name,
+                "representative_name": request_obj.representative_name,
+                "email": request_obj.representative_email,
+                "phone": request_obj.representative_phone,
+                "location": request_obj.location,
+                "license_url": data.get("company_license_url") or "",
+            },
+            "mentor": {
+                "name": request_obj.representative_name,
+                "email": request_obj.representative_email,
+                "phone": request_obj.representative_phone,
+            },
+            "internship": {
+                "position_title": "Self Placement",
+                "work_mode": "SELF_PLACEMENT",
+            },
+        },
+        "advisor_name": advisor_user.get_full_name().strip() or advisor_user.username if advisor_user else "",
+        "resume_url": student.resume.url if getattr(student, "resume", None) else None,
+        "company_license_url": data.get("company_license_url") or None,
+        "created_at": request_obj.created_at.isoformat() if request_obj.created_at else None,
+        "is_self_placement": True,
+        "finalInternshipStatus": "ACTIVE_INTERN" if request_obj.status == SelfPlacementRequest.Status.APPROVED else "PENDING",
+        "studentUserPk": student_user.id,
+        "__raw": {
+            "selfPlacementRequest": data,
+        },
+    }
 
 
 class InternshipApplicationCreateView(generics.CreateAPIView):
@@ -665,6 +776,24 @@ class CoordinatorPendingApplicationsListView(generics.ListAPIView):
             .order_by("-created_at")
         )
 
+    def list(self, request, *args, **kwargs):
+        applications = self.get_queryset()
+        application_data = self.get_serializer(applications, many=True).data
+
+        user = request.user
+        coordinator = getattr(user, "staff", None)
+        self_placements = []
+        if coordinator:
+            self_placements = SelfPlacementRequest.objects.filter(
+                student__department=coordinator.department,
+                status=SelfPlacementRequest.Status.PENDING,
+            ).select_related("student__user", "student__department", "student__advisor__user")
+
+        self_placement_data = [_self_placement_to_application_like(obj) for obj in self_placements]
+        combined = application_data + self_placement_data
+        combined.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+        return Response(combined, status=status.HTTP_200_OK)
+
 
 class CoordinatorApprovedApplicationsListView(generics.ListAPIView):
     """GET /applications/approved/ — applications that have been approved by the department and are visible to coordinators."""
@@ -695,13 +824,23 @@ class CoordinatorApprovedApplicationsListView(generics.ListAPIView):
         )
 
     def list(self, request, *args, **kwargs):
-        response = super().list(request, *args, **kwargs)
+        applications = self.get_queryset()
+        application_data = self.get_serializer(applications, many=True).data
 
-        items = response.data if isinstance(response.data, list) else response.data.get("results", [])
-        if not items:
-            return response
+        user = request.user
+        coordinator = getattr(user, "staff", None)
+        self_placements = []
+        if coordinator:
+            self_placements = SelfPlacementRequest.objects.filter(
+                student__department=coordinator.department,
+                status=SelfPlacementRequest.Status.APPROVED,
+            ).select_related("student__user", "student__department", "student__advisor__user")
 
-        app_ids = [item["id"] for item in items if item.get("id")]
+        self_placement_data = [_self_placement_to_application_like(obj) for obj in self_placements]
+        combined = application_data + self_placement_data
+        combined.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+
+        app_ids = [item["id"] for item in combined if item.get("id")]
         from core.models import AdvisorAssignment
         examiner_assignments = (
             AdvisorAssignment.objects.filter(
@@ -720,13 +859,13 @@ class CoordinatorApprovedApplicationsListView(generics.ListAPIView):
                 examiner_map[iid] = []
             examiner_map[iid].append(name)
 
-        for item in items:
+        for item in combined:
             iid = item.get("id")
             names = examiner_map.get(iid, [])
-            item["examiner_name"] = names[0] if len(names) > 0 else ""
-            item["examiner2_name"] = names[1] if len(names) > 1 else ""
+            item["examiner_name"] = names[0] if len(names) > 0 else item.get("examiner_name", "")
+            item["examiner2_name"] = names[1] if len(names) > 1 else item.get("examiner2_name", "")
 
-        return response
+        return Response(combined, status=status.HTTP_200_OK)
 
 
 class ApplicationDetailView(generics.RetrieveAPIView):
@@ -757,24 +896,28 @@ class ApplicationDetailView(generics.RetrieveAPIView):
         obj = super().get_object()
         user = self.request.user
 
+        def _return_synced():
+            _sync_application_advisor_status_from_final_eval(obj)
+            return obj
+
         # student owner
         if getattr(user, "student_profile", None) and obj.student == user.student_profile:
-            return obj
+            return _return_synced()
 
         # coordinator of same department
         coord = getattr(user, "staff", None)
         if coord and coord.department_id == obj.student.department_id:
-            return obj
+            return _return_synced()
 
         # advisor assigned
         if getattr(user, "advisor_profile", None) and obj.advisor and obj.advisor.user_id == user.id:
-            return obj
+            return _return_synced()
 
         # company mentor
         if getattr(user, "company_mentorships", None):
             if obj.position and obj.position.company_id:
                 mentor_exists = obj.position.company.mentor and obj.position.company.mentor.user_id == user.id
                 if mentor_exists:
-                    return obj
+                    return _return_synced()
 
         raise PermissionDenied("Not authorized to view this application")

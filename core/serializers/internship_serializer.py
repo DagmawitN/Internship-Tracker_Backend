@@ -121,6 +121,10 @@ class InternshipPositionSerializer(serializers.ModelSerializer):
     )
     accepted_applications = serializers.IntegerField(read_only=True)
     available_slots = serializers.SerializerMethodField()
+    company_name = serializers.CharField(source="company.company_name", read_only=True)
+    # Expose a friendly `internship_type` field for frontend (maps to model.work_mode)
+    # Accept internship_type on input and override representation in to_representation
+    internship_type = serializers.CharField(required=False)
 
     class Meta:
         model = InternshipPosition
@@ -152,16 +156,42 @@ class InternshipPositionSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         required_skills = validated_data.pop("required_skills", [])
+        internship_type = validated_data.pop("internship_type", None)
+        if internship_type:
+            # map frontend values to model WorkMode choices
+            validated_data["work_mode"] = str(internship_type).strip().upper()[:6]
         instance = super().create(validated_data)
         instance.required_skills.set(self._resolve_required_skills(required_skills))
         return instance
 
     def update(self, instance, validated_data):
         required_skills = validated_data.pop("required_skills", None)
+        internship_type = validated_data.pop("internship_type", None)
+        if internship_type:
+            validated_data["work_mode"] = str(internship_type).strip().upper()[:6]
         instance = super().update(instance, validated_data)
         if required_skills is not None:
             instance.required_skills.set(self._resolve_required_skills(required_skills))
         return instance
+
+    def get_internship_type(self, obj):
+        # Normalize WorkMode to frontend-friendly label
+        wm = getattr(obj, "work_mode", None)
+        if wm is None:
+            return None
+        if wm.upper() == "REMOTE":
+            return "Remote"
+        if wm.upper() == "ONSITE":
+            return "Onsite"
+        if wm.upper() == "HYBRID":
+            return "Hybrid"
+        return str(wm)
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        # Ensure internship_type in output is user-friendly mapped from work_mode
+        ret["internship_type"] = self.get_internship_type(instance)
+        return ret
 
     def validate_working_days(self, value):
         valid = {

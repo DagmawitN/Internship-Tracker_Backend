@@ -61,6 +61,13 @@ class CompanyApplicantsListView(generics.ListAPIView):
             position__company_id=company.id
         )
 
+        # Optional position filters used by company dashboard
+        position_id = self.request.query_params.get("position_id")
+        internship_id = self.request.query_params.get("internship_id")
+        selected_position_id = position_id or internship_id
+        if selected_position_id:
+            queryset = queryset.filter(position_id=selected_position_id)
+
         dept_status = self.request.query_params.get("dept_status")
         mentor_status = self.request.query_params.get("mentor_status")
         student_decision = self.request.query_params.get("student_decision")

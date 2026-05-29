@@ -101,6 +101,42 @@ class FinalIndustryEvaluationListCreateAPIView(generics.ListCreateAPIView):
                 "internship__position__company",
                 "company_mentor__user",
             )
+        if _role_name(user) == "COORDINATOR":
+            staff = getattr(user, "staff", None)
+            qs = FinalIndustryEvaluation.objects.select_related(
+                "internship__student__user",
+                "internship__position__company",
+                "company_mentor__user",
+            )
+            if staff and staff.department_id:
+                qs = qs.filter(internship__student__department=staff.department)
+            internship_id = self.request.query_params.get("internship_id")
+            if internship_id:
+                from core.models import Internship as InternshipRecord
+
+                internship_pks = set()
+                if InternshipRecord.objects.filter(pk=internship_id).exists():
+                    internship_pks.add(int(internship_id))
+                app_internships = InternshipRecord.objects.filter(
+                    student__applications__id=internship_id
+                ).values_list("pk", flat=True)
+                internship_pks.update(app_internships)
+                if internship_pks:
+                    qs = qs.filter(internship_id__in=internship_pks)
+                else:
+                    qs = qs.none()
+            return qs
+        if _role_name(user) == "STUDENT":
+            student = getattr(user, "student_profile", None)
+            if not student:
+                return FinalIndustryEvaluation.objects.none()
+            return FinalIndustryEvaluation.objects.filter(
+                internship__student=student
+            ).select_related(
+                "internship__student__user",
+                "internship__position__company",
+                "company_mentor__user",
+            )
         return FinalIndustryEvaluation.objects.none()
 
     def perform_create(self, serializer):
@@ -188,9 +224,9 @@ class CoordinatorAdvisorEvaluationAPIView(APIView):
     def get(self, request):
         user = request.user
         role = _role_name(user)
-        if role not in ("COORDINATOR", "ADVISOR"):
+        if role not in ("COORDINATOR", "ADVISOR", "STUDENT"):
             return Response(
-                {"detail": "Only coordinators and advisors can access this endpoint."},
+                {"detail": "Only coordinators, advisors, and the owning student can access this endpoint."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -212,6 +248,15 @@ class CoordinatorAdvisorEvaluationAPIView(APIView):
                         {"detail": "Not found."},
                         status=status.HTTP_404_NOT_FOUND,
                     )
+
+        # Student may only view their own internship application's advisor evaluation.
+        if role == "STUDENT":
+            student_profile = getattr(user, "student_profile", None)
+            if not student_profile or internship.student_id != student_profile.id:
+                return Response(
+                    {"detail": "Not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
         evaluation = AdvisorEvaluation.objects.filter(internship=internship).first()
         if not evaluation:
@@ -322,6 +367,17 @@ class MonthlyIndustryEvaluationListCreateAPIView(generics.ListCreateAPIView):
             if internship_id:
                 qs = qs.filter(internship_id=internship_id)
             return qs
+        if _role_name(user) == "STUDENT":
+            student = getattr(user, "student_profile", None)
+            if not student:
+                return MonthlyIndustryEvaluation.objects.none()
+            qs = MonthlyIndustryEvaluation.objects.filter(
+                internship__student=student
+            ).select_related("internship__student__user", "internship__position__company")
+            internship_id = self.request.query_params.get("internship_id")
+            if internship_id:
+                qs = qs.filter(internship_id=internship_id)
+            return qs
         return MonthlyIndustryEvaluation.objects.none()
 
     def perform_create(self, serializer):
@@ -351,8 +407,25 @@ class FinalIndustryEvaluationApproveAPIView(APIView):
 
     def patch(self, request, id):
         evaluation = get_object_or_404(FinalIndustryEvaluation, pk=id)
+        # FinalIndustryEvaluation.internship points to an Internship execution record.
+        # The advisor assignment validations expect an InternshipApplication instance.
+        from core.models import InternshipApplication, Internship as InternshipRecord
+
+        internship_obj = evaluation.internship
+        application = None
+        if isinstance(internship_obj, InternshipApplication):
+            application = internship_obj
+        else:
+            application = (
+                InternshipApplication.objects.filter(
+                    student=internship_obj.student, position=internship_obj.position
+                ).first()
+            )
+        if application is None:
+            return Response({"detail": "Associated internship application not found."}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
-            validate_advisor_assignment(request.user, evaluation.internship)
+            validate_advisor_assignment(request.user, application)
         except DjangoValidationError as exc:
             return Response(exc.message_dict, status=status.HTTP_403_FORBIDDEN)
         if evaluation.status != CompanyEvaluationStatus.SUBMITTED:
@@ -361,6 +434,21 @@ class FinalIndustryEvaluationApproveAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         _approve_company_evaluation(evaluation, request.user)
+        # Also mark the related InternshipApplication advisor review as completed
+        from core.models import Advisor as AdvisorModel
+
+        try:
+            advisor_obj = AdvisorModel.objects.filter(user=request.user).first()
+            if application:
+                # assign advisor if not set
+                if advisor_obj and getattr(application, "advisor_id", None) != advisor_obj.pk:
+                    application.advisor = advisor_obj
+                if application.advisor_status == "PENDING":
+                    application.advisor_status = "APPROVED"
+                    application.save(update_fields=["advisor", "advisor_status"])
+        except Exception:
+            # best-effort: don't block approval if updating application fails
+            pass
         return Response(
             FinalIndustryEvaluationSerializer(evaluation).data,
             status=status.HTTP_200_OK,
@@ -372,11 +460,39 @@ class FinalIndustryEvaluationRejectAPIView(APIView):
 
     def patch(self, request, id):
         evaluation = get_object_or_404(FinalIndustryEvaluation, pk=id)
+        from core.models import InternshipApplication
+
+        internship_obj = evaluation.internship
+        application = None
+        if isinstance(internship_obj, InternshipApplication):
+            application = internship_obj
+        else:
+            application = (
+                InternshipApplication.objects.filter(
+                    student=internship_obj.student, position=internship_obj.position
+                ).first()
+            )
+        if application is None:
+            return Response({"detail": "Associated internship application not found."}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
-            validate_advisor_assignment(request.user, evaluation.internship)
+            validate_advisor_assignment(request.user, application)
         except DjangoValidationError as exc:
             return Response(exc.message_dict, status=status.HTTP_403_FORBIDDEN)
         _reject_company_evaluation(evaluation)
+        # Also mark the related InternshipApplication advisor review as rejected
+        from core.models import Advisor as AdvisorModel
+
+        try:
+            advisor_obj = AdvisorModel.objects.filter(user=request.user).first()
+            if application:
+                if advisor_obj and getattr(application, "advisor_id", None) != advisor_obj.pk:
+                    application.advisor = advisor_obj
+                if application.advisor_status == "PENDING":
+                    application.advisor_status = "REJECTED"
+                    application.save(update_fields=["advisor", "advisor_status"])
+        except Exception:
+            pass
         return Response(
             {"message": "Final industry evaluation rejected.", "id": evaluation.id},
             status=status.HTTP_200_OK,

@@ -2,7 +2,7 @@
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.tokens import default_token_generator
-from django.db import connection, transaction
+from django.db import connection, transaction, IntegrityError
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from rest_framework import generics, status
@@ -434,6 +434,11 @@ class StaffRegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         pre_reg = serializer.validated_data["pre_reg"]
 
+        # Prevent duplicate email registrations with a clear error response
+        email = serializer.validated_data.get("email")
+        if email and User.objects.filter(email=email).exists():
+            return Response({"error": "A user with that email already exists."}, status=status.HTTP_400_BAD_REQUEST)
+
         if pre_reg.role == "COORDINATOR":
             role_name = "COORDINATOR"
         elif pre_reg.role == "ADVISOR":
@@ -442,11 +447,14 @@ class StaffRegisterView(generics.CreateAPIView):
             role_name = "STAFF"
         role_obj, _ = UserRole.objects.get_or_create(role_name=role_name)
 
-        user = User.objects.create(
-            username=serializer.validated_data["username"],
-            email=serializer.validated_data["email"],
-            role=role_obj,
-        )
+        try:
+            user = User.objects.create(
+                username=serializer.validated_data["username"],
+                email=serializer.validated_data["email"],
+                role=role_obj,
+            )
+        except IntegrityError:
+            return Response({"error": "A user with that email or username already exists."}, status=status.HTTP_400_BAD_REQUEST)
         user.set_password(serializer.validated_data["password"])
         user.save()
         Profile.objects.get_or_create(
@@ -461,25 +469,7 @@ class StaffRegisterView(generics.CreateAPIView):
         pre_reg.is_used = True
         pre_reg.save()
 
-        if settings.DEBUG:
-            # Development: auto-verify, skip OTP, return tokens immediately
-            user.is_verified = True
-            user.save(update_fields=["is_verified"])
-            tokens = get_tokens_for_user(user)
-            return Response(
-                {
-                    "message": "Staff registered successfully (dev mode: OTP skipped).",
-                    "tokens": tokens,
-                    "user": {
-                        "id": user.id,
-                        "email": user.email,
-                        "role": user.role.role_name,
-                    },
-                },
-                status=201,
-            )
-
-        # Production: send OTP, require verification before login
+        # Create OTP and send email — require verification before login.
         otp_code = EmailOTP.generate_otp()
         EmailOTP.objects.create(user=user, otp=otp_code)
         send_otp_email(user.email, otp_code)
