@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: internship-tracker-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn internship_project.wsgi:application
