@@ -7,7 +7,10 @@ import os
 import re
 import math
 
-import voyageai
+try:
+    import voyageai
+except ImportError:  # Render Python 3.14 cannot install voyageai yet.
+    voyageai = None
 
 _client = None
 _EMBEDDING_DIM = 1536
@@ -15,6 +18,8 @@ _EMBEDDING_DIM = 1536
 
 def get_voyage_client():
     global _client
+    if voyageai is None:
+        raise ImportError("voyageai is not installed")
     if _client is None:
         api_key = os.environ.get("VOYAGE_API_KEY")
         if not api_key:

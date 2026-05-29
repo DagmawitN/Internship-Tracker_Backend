@@ -32,7 +32,6 @@ executing==2.2.1
 gunicorn==25.1.0
 google-generativeai==0.8.5
 pypdf==5.1.0
-voyageai==0.3.7
 idna==3.11
 inflection==0.5.1
 ipykernel==7.2.0
