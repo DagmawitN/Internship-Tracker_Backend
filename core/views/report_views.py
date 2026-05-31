@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 from core.models import (
     AdvisorAssignment,
     DailyLogEntry,
+    Internship,
     InternshipApplication,
     Report,
     ReportFeedback,
@@ -42,6 +43,27 @@ class StudentInternshipDocumentListCreateAPIView(APIView):
         )
         if internship_id:
             qs = qs.filter(pk=internship_id)
+            hit = qs.order_by("-created_at").first()
+            if hit:
+                return hit
+
+            active_internship = Internship.objects.select_related("position").filter(
+                pk=internship_id, student=student
+            ).first()
+            if active_internship and active_internship.position_id:
+                return (
+                    InternshipApplication.objects.filter(
+                        student=student,
+                        position_id=active_internship.position_id,
+                    )
+                    .filter(
+                        models.Q(student_decision="ACCEPTED")
+                        | models.Q(dept_status="APPROVED")
+                    )
+                    .order_by("-created_at")
+                    .first()
+                )
+
         return qs.order_by("-created_at").first()
 
     def get(self, request):
@@ -77,7 +99,12 @@ class StudentInternshipDocumentListCreateAPIView(APIView):
         internship = self._get_active_internship(student, internship_id)
         if not internship:
             return Response(
-                {"error": "No active internship application found."},
+                {
+                    "error": (
+                        "No active internship application found. "
+                        "Pass internship_id or application_id if needed."
+                    )
+                },
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -434,13 +461,28 @@ class CreateWeeklyLogbookAPIView(APIView):
 
         student = request.user.student_profile
 
-        # Allow caller to pass the application id directly (avoids ambiguity)
-        internship_id = request.data.get("internship_id") or request.data.get("application_id")
+        # Accept either an InternshipApplication PK or an Internship PK.
+        # Some frontend flows track the active placement by internship record,
+        # while the weekly logbook relation itself still points to the accepted application.
+        placement_id = request.data.get("internship_id") or request.data.get("application_id")
+        internship = None
 
-        if internship_id:
+        if placement_id:
             internship = InternshipApplication.objects.filter(
-                pk=internship_id, student=student
+                pk=placement_id, student=student
             ).first()
+
+            if not internship:
+                active_internship = Internship.objects.select_related("position").filter(
+                    pk=placement_id, student=student
+                ).first()
+                if active_internship and active_internship.position_id:
+                    internship = InternshipApplication.objects.filter(
+                        student=student,
+                        position_id=active_internship.position_id,
+                    ).filter(
+                        models.Q(student_decision="ACCEPTED") | models.Q(dept_status="APPROVED")
+                    ).order_by("-created_at").first()
         else:
             # Fall back: find the most recent approved/accepted application
             internship = InternshipApplication.objects.filter(
@@ -451,7 +493,12 @@ class CreateWeeklyLogbookAPIView(APIView):
 
         if not internship:
             return Response(
-                {"error": "No active internship application found. Pass internship_id if needed."},
+                {
+                    "error": (
+                        "No active internship application found. "
+                        "Pass internship_id or application_id if needed."
+                    )
+                },
                 status=status.HTTP_404_NOT_FOUND,
             )
 
