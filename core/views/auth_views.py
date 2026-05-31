@@ -1,5 +1,3 @@
-import logging
-
 # core/views/auth_views.py
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
@@ -398,27 +396,8 @@ class VerifyOTPView(APIView):
 
             tokens = get_tokens_for_user(user)
 
-            # Build a minimal user payload similar to LoginView so the frontend
-            # can persist user info (including department/company claims).
-            mentor = CompanyMentor.objects.filter(user=user).select_related("company").first()
-            user_payload = {
-                "id": user.id,
-                "email": user.email,
-                "role": user.role.role_name,
-                "company_id": mentor.company.id if mentor else None,
-                "company_name": mentor.company.company_name if mentor else None,
-            }
-            try:
-                if getattr(user, 'student_profile', None):
-                    user_payload["student"] = {
-                        "student_id": user.student_profile.student_id,
-                        "department": user.student_profile.department.id if user.student_profile.department else None,
-                    }
-            except Exception:
-                pass
-
             return Response(
-                {"message": "Email verified successfully", "tokens": tokens, "user": user_payload}
+                {"message": "Email verified successfully", "tokens": tokens}
             )
 
         except User.DoesNotExist:
@@ -451,86 +430,67 @@ class StaffRegisterView(generics.CreateAPIView):
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        pre_reg = serializer.validated_data["pre_reg"]
+
+        # Prevent duplicate email registrations with a clear error response
+        email = serializer.validated_data.get("email")
+        if email and User.objects.filter(email=email).exists():
+            return Response({"error": "A user with that email already exists."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if pre_reg.role == "COORDINATOR":
+            role_name = "COORDINATOR"
+        elif pre_reg.role == "ADVISOR":
+            role_name = "ADVISOR"
+        else:
+            role_name = "STAFF"
+        role_obj, _ = UserRole.objects.get_or_create(role_name=role_name)
+
         try:
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            pre_reg = serializer.validated_data["pre_reg"]
-
-            department = getattr(pre_reg, "department", None)
-            if not department:
-                return Response(
-                    {"error": "This pre-registered staff record is missing a department."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            # Prevent duplicate email registrations with a clear error response
-            email = serializer.validated_data.get("email")
-            if email and User.objects.filter(email=email).exists():
-                return Response({"error": "A user with that email already exists."}, status=status.HTTP_400_BAD_REQUEST)
-
-            if pre_reg.role == "COORDINATOR":
-                role_name = "COORDINATOR"
-            elif pre_reg.role == "ADVISOR":
-                role_name = "ADVISOR"
-            else:
-                role_name = "STAFF"
-            role_obj, _ = UserRole.objects.get_or_create(role_name=role_name)
-
-            try:
-                user = User.objects.create(
-                    username=serializer.validated_data["username"],
-                    email=serializer.validated_data["email"],
-                    role=role_obj,
-                )
-            except IntegrityError:
-                return Response({"error": "A user with that email or username already exists."}, status=status.HTTP_400_BAD_REQUEST)
-            user.set_password(serializer.validated_data["password"])
-            user.save()
-            Profile.objects.get_or_create(
-                user=user,
-                defaults={"full_name": user.get_full_name() or user.username},
+            user = User.objects.create(
+                username=serializer.validated_data["username"],
+                email=serializer.validated_data["email"],
+                role=role_obj,
             )
+        except IntegrityError:
+            return Response({"error": "A user with that email or username already exists."}, status=status.HTTP_400_BAD_REQUEST)
+        user.set_password(serializer.validated_data["password"])
+        user.save()
+        Profile.objects.get_or_create(
+            user=user,
+            defaults={"full_name": user.get_full_name() or user.username},
+        )
 
-            Staff.objects.create(user=user, department=department, name=pre_reg.name)
+        Staff.objects.create(
+            user=user, department=pre_reg.department, name=pre_reg.name
+        )
 
-            pre_reg.is_used = True
-            pre_reg.save()
+        pre_reg.is_used = True
+        pre_reg.save()
 
-            # Create OTP and send email — require verification before login.
-            otp_code = EmailOTP.generate_otp()
-            EmailOTP.objects.create(user=user, otp=otp_code)
-            # Include department info in the welcome/OTP email so the recipient
-            # knows which department they were registered for and the frontend
-            # can later read department claims from the token after verification.
-            dept_text = f"Welcome {pre_reg.name}!\nDepartment: {department.department_name} (id: {department.id})"
-            send_otp_email(user.email, otp_code, extra_text=dept_text)
+        # Create OTP and send email — require verification before login.
+        otp_code = EmailOTP.generate_otp()
+        EmailOTP.objects.create(user=user, otp=otp_code)
+        send_otp_email(user.email, otp_code)
 
-            return Response(
-                {
-                    "message": "Staff registered successfully. Please verify OTP.",
-                    "user": {
-                        "id": user.id,
-                        "email": user.email,
-                        "role": user.role.role_name,
-                        "profile": {
-                            "bio": user.profile.bio if hasattr(user, "profile") else "",
-                            "avatar": user.profile.avatar.url
-                            if hasattr(user, "profile") and user.profile.avatar
-                            else None,
-                        },
+        return Response(
+            {
+                "message": "Staff registered successfully. Please verify OTP.",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "role": user.role.role_name,
+                    "profile": {
+                        "bio": user.profile.bio if hasattr(user, "profile") else "",
+                        "avatar": user.profile.avatar.url
+                        if hasattr(user, "profile") and user.profile.avatar
+                        else None,
                     },
                 },
-                status=201,
-            )
-        except Exception:
-            logging.getLogger(__name__).exception(
-                "Unhandled error in staff registration",
-                extra={"email": request.data.get("email")},
-            )
-            return Response(
-                {"error": "Staff registration failed due to an unexpected server error."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            },
+            status=201,
+        )
 
 
 class PasswordResetRequestView(generics.GenericAPIView):

@@ -250,12 +250,37 @@ EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "False") == "True"
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
 
-DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
-
 CLOUDINARY_STORAGE = {
     'CLOUD_NAME': os.getenv('CLOUDINARY_CLOUD_NAME'),
     'API_KEY': os.getenv('CLOUDINARY_API_KEY'),
     'API_SECRET': os.getenv('CLOUDINARY_API_SECRET'),
+}
+
+_has_cloudinary_credentials = all(
+    [
+        CLOUDINARY_STORAGE.get('CLOUD_NAME'),
+        CLOUDINARY_STORAGE.get('API_KEY'),
+        CLOUDINARY_STORAGE.get('API_SECRET'),
+    ]
+)
+
+if _has_module("cloudinary_storage") and _has_cloudinary_credentials:
+    _default_storage_backend = "cloudinary_storage.storage.MediaCloudinaryStorage"
+else:
+    _default_storage_backend = "django.core.files.storage.FileSystemStorage"
+
+if _has_module("whitenoise"):
+    _staticfiles_storage_backend = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+else:
+    _staticfiles_storage_backend = "django.contrib.staticfiles.storage.StaticFilesStorage"
+
+STORAGES = {
+    "default": {
+        "BACKEND": _default_storage_backend,
+    },
+    "staticfiles": {
+        "BACKEND": _staticfiles_storage_backend,
+    },
 }
 
 SIMPLE_JWT = {
