@@ -124,12 +124,32 @@ class StudentsList(generics.ListCreateAPIView):
         return [IsAuthenticated()]
 
     def get_queryset(self):
-        qs = User.objects.filter(role__role_name="STUDENT").select_related("student_profile")
+        qs = User.objects.filter(role__role_name="STUDENT").select_related(
+            "student_profile",
+            "student_profile__department",
+        )
         dept = self.request.query_params.get("department")
         status = self.request.query_params.get("status")
 
-        if dept:
-            qs = qs.filter(student_profile__department__department_name__iexact=dept)
+        # Coordinators can only see students from their own department.
+        if IsCoordinatorUser().has_permission(self.request, self):
+            coordinator = getattr(self.request.user, "staff", None)
+            if not coordinator or not coordinator.department_id:
+                return qs.none()
+
+            qs = qs.filter(student_profile__department_id=coordinator.department_id)
+
+            # If a department query is provided, do not allow cross-department reads.
+            if dept:
+                requested_department = _resolve_department_value(dept)
+                if requested_department and requested_department.id != coordinator.department_id:
+                    return qs.none()
+        elif dept:
+            requested_department = _resolve_department_value(dept)
+            if requested_department:
+                qs = qs.filter(student_profile__department_id=requested_department.id)
+            else:
+                qs = qs.filter(student_profile__department__department_name__iexact=dept)
 
         if status and str(status).strip().lower() == "approved":
             # students with at least one approved internship application

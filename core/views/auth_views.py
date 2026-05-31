@@ -37,36 +37,42 @@ from core.utils import send_otp_email, send_password_reset_email
 User = get_user_model()
 
 
+def get_department_info_for_user(user):
+    """Resolve department metadata for any authenticated user role."""
+    department_id = None
+    department_name = None
+    student_identifier = None
+
+    try:
+        if hasattr(user, "staff") and user.staff and user.staff.department:
+            department_id = user.staff.department.id
+            department_name = user.staff.department.department_name
+        elif hasattr(user, "advisor") and user.advisor and user.advisor.department:
+            department_id = user.advisor.department.id
+            department_name = user.advisor.department.department_name
+        elif getattr(user, "student_profile", None):
+            student = user.student_profile
+            if student.department:
+                department_id = student.department.id
+                department_name = student.department.department_name
+            student_identifier = student.student_id
+    except Exception:
+        pass
+
+    return {
+        "department_id": department_id,
+        "department_name": department_name,
+        "student_identifier": student_identifier,
+    }
+
+
 # Helper to generate JWT tokens with department info
 def get_tokens_for_user(user):
     refresh = RefreshToken.for_user(user)
-    
-    # Add department information to token payload
-    # Check if user is a coordinator, advisor, examiner, or student
-    department_id = None
-    department_name = None
-    
-    try:
-        # Check if user is a Staff member (Coordinator/Examiner)
-        if hasattr(user, 'staff') and user.staff:
-            staff = user.staff
-            department_id = staff.department.id
-            department_name = staff.department.department_name
-        # Check if user is an Advisor
-        elif hasattr(user, 'advisor') and user.advisor:
-            advisor = user.advisor
-            department_id = advisor.department.id
-            department_name = advisor.department.department_name
-        # Check if user is a Student
-        elif getattr(user, 'student_profile', None):
-            student = user.student_profile
-            department_id = student.department.id if student.department else None
-            department_name = student.department.department_name if student.department else None
-            # student identifier (e.g., ETS1019/14)
-            student_identifier = student.student_id
-    except Exception as e:
-        # If any error occurs fetching department, continue without it
-        pass
+    department_info = get_department_info_for_user(user)
+    department_id = department_info["department_id"]
+    department_name = department_info["department_name"]
+    student_identifier = department_info["student_identifier"]
     
     # Add department claims to token
     refresh['department_id'] = department_id
@@ -75,7 +81,7 @@ def get_tokens_for_user(user):
     refresh.access_token['department_name'] = department_name
 
     # Add student identifier claim when available
-    if 'student_identifier' in locals() and student_identifier:
+    if student_identifier:
         try:
             refresh['student_id'] = student_identifier
             refresh.access_token['student_id'] = student_identifier
@@ -302,11 +308,18 @@ class LoginView(generics.GenericAPIView):
             )
 
         tokens = get_tokens_for_user(user)
+        department_info = get_department_info_for_user(user)
+        department_id = department_info["department_id"]
+        department_name = department_info["department_name"]
+
         # Build user payload and include student info when present
         user_payload = {
             "id": user.id,
             "email": user.email,
             "role": user.role.role_name,
+            "department": department_name,
+            "department_id": department_id,
+            "department_name": department_name,
             "company_id": mentor.company.id if mentor else None,
             "company_name": mentor.company.company_name if mentor else None,
         }
@@ -324,6 +337,9 @@ class LoginView(generics.GenericAPIView):
                 "user_id": user.id,
                 "email": user.email,
                 "role": user.role.role_name,
+                "department": department_name,
+                "department_id": department_id,
+                "department_name": department_name,
                 "user": user_payload,
                 "tokens": tokens,
             },

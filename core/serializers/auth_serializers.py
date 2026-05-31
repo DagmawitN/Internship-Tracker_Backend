@@ -12,10 +12,38 @@ User = get_user_model()
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     profile = ProfileSerializer(read_only=True)
+    department = serializers.SerializerMethodField(read_only=True)
+    department_id = serializers.SerializerMethodField(read_only=True)
+    department_name = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'password', 'phone',"profile"]
+        fields = [
+            'id',
+            'username',
+            'email',
+            'password',
+            'phone',
+            "profile",
+            'department',
+            'department_id',
+            'department_name',
+        ]
+
+    def _resolve_department(self, obj):
+        student = getattr(obj, "student_profile", None)
+        return getattr(student, "department", None) if student else None
+
+    def get_department(self, obj):
+        department = self._resolve_department(obj)
+        return department.department_name if department else None
+
+    def get_department_id(self, obj):
+        department = self._resolve_department(obj)
+        return department.id if department else None
+
+    def get_department_name(self, obj):
+        return self.get_department(obj)
 
     def create(self, validated_data):
         password = validated_data.pop('password')
