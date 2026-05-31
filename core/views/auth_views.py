@@ -398,8 +398,27 @@ class VerifyOTPView(APIView):
 
             tokens = get_tokens_for_user(user)
 
+            # Build a minimal user payload similar to LoginView so the frontend
+            # can persist user info (including department/company claims).
+            mentor = CompanyMentor.objects.filter(user=user).select_related("company").first()
+            user_payload = {
+                "id": user.id,
+                "email": user.email,
+                "role": user.role.role_name,
+                "company_id": mentor.company.id if mentor else None,
+                "company_name": mentor.company.company_name if mentor else None,
+            }
+            try:
+                if getattr(user, 'student_profile', None):
+                    user_payload["student"] = {
+                        "student_id": user.student_profile.student_id,
+                        "department": user.student_profile.department.id if user.student_profile.department else None,
+                    }
+            except Exception:
+                pass
+
             return Response(
-                {"message": "Email verified successfully", "tokens": tokens}
+                {"message": "Email verified successfully", "tokens": tokens, "user": user_payload}
             )
 
         except User.DoesNotExist:
@@ -480,7 +499,11 @@ class StaffRegisterView(generics.CreateAPIView):
             # Create OTP and send email — require verification before login.
             otp_code = EmailOTP.generate_otp()
             EmailOTP.objects.create(user=user, otp=otp_code)
-            send_otp_email(user.email, otp_code)
+            # Include department info in the welcome/OTP email so the recipient
+            # knows which department they were registered for and the frontend
+            # can later read department claims from the token after verification.
+            dept_text = f"Welcome {pre_reg.name}!\nDepartment: {department.department_name} (id: {department.id})"
+            send_otp_email(user.email, otp_code, extra_text=dept_text)
 
             return Response(
                 {

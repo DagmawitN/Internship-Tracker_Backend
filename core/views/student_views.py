@@ -102,7 +102,7 @@ class StudentCurrentPlacementView(APIView):
                 "mentor__user",
                 "supervisor__user",
             )
-            .order_by("-created_at")
+            .order_by("-id")
             .first()
         )
 

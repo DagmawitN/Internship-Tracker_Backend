@@ -7,7 +7,12 @@ from threading import Thread
 logger = logging.getLogger(__name__)
 
 
-def send_otp_email(email, otp):
+def send_otp_email(email, otp, extra_text: str | None = None):
+    """Send an OTP email. Optionally include `extra_text` (e.g. department or welcome message).
+
+    The extra_text is prepended to the message body when provided so callers can
+    include contextual information (department, role, welcome link, etc.).
+    """
     if settings.DEBUG:
         logger.warning("DEBUG OTP for %s: %s", email, otp)
 
@@ -19,10 +24,14 @@ def send_otp_email(email, otp):
         )
         return 0
 
+    body = f"Your OTP is {otp}. It expires in 10 minutes."
+    if extra_text:
+        body = f"{extra_text}\n\n{body}"
+
     try:
         return send_mail(
             subject="Your OTP Code",
-            message=f"Your OTP is {otp}. It expires in 10 minutes.",
+            message=body,
             from_email=settings.EMAIL_HOST_USER,
             recipient_list=[email],
             fail_silently=False,
