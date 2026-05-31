@@ -28,6 +28,47 @@ def _get_role(user):
     return getattr(user.role, "role_name", None) if user.role else None
 
 
+def _resolve_student_current_application(student):
+    """Resolve the application that corresponds to the student's current placement."""
+    active_internship = (
+        Internship.objects.filter(
+            student=student,
+            status__in=["NOT_STARTED", "ONGOING"],
+        )
+        .select_related("position")
+        .order_by("-id")
+        .first()
+    )
+
+    if active_internship and active_internship.position_id:
+        matched = (
+            InternshipApplication.objects.filter(
+                student=student,
+                position_id=active_internship.position_id,
+            )
+            .filter(
+                models.Q(student_decision="ACCEPTED")
+                | models.Q(dept_status="APPROVED")
+                | models.Q(mentor_status="ACCEPTED")
+            )
+            .order_by("-created_at")
+            .first()
+        )
+        if matched:
+            return matched
+
+    return (
+        InternshipApplication.objects.filter(student=student)
+        .filter(
+            models.Q(student_decision="ACCEPTED")
+            | models.Q(dept_status="APPROVED")
+            | models.Q(mentor_status="ACCEPTED")
+        )
+        .order_by("-created_at")
+        .first()
+    )
+
+
 # ---------------------------------------------------------------------------
 # Coordinator: list advisors in own department
 # ---------------------------------------------------------------------------
@@ -206,13 +247,8 @@ class AssignExaminerView(APIView):
         if not examiner_staff or examiner_staff.department != coordinator_staff.department:
             raise ValidationError("Examiner does not belong to your department.")
 
-        # Find the application for this student — match on dept_status APPROVED
-        # (same logic as assign-advisor; student_decision may still be PENDING in some workflows)
-        application = InternshipApplication.objects.filter(
-            student=student,
-        ).filter(
-            models.Q(student_decision="ACCEPTED") | models.Q(dept_status="APPROVED")
-        ).order_by("-created_at").first()
+        # Resolve the application tied to the student's active placement first.
+        application = _resolve_student_current_application(student)
 
         if not application:
             raise ValidationError(
@@ -270,11 +306,7 @@ class AssignExaminerView(APIView):
         if student.department != coordinator_staff.department:
             raise PermissionDenied("This student is not in your department.")
 
-        application = InternshipApplication.objects.filter(
-            student=student,
-        ).filter(
-            models.Q(student_decision="ACCEPTED") | models.Q(dept_status="APPROVED")
-        ).order_by("-created_at").first()
+        application = _resolve_student_current_application(student)
 
         if not application:
             raise ValidationError(

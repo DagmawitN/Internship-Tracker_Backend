@@ -28,6 +28,36 @@ from core.serializers.report_serializers import (
     SubmitFinalReportSerializer,
     WeeklyLogbookSerializer,
 )
+
+
+def resolve_application_id(raw_id: str) -> int | None:
+    """
+    Given a raw ID that may be either an InternshipApplication PK or an
+    Internship (execution record) PK, return the InternshipApplication PK.
+    Returns None if nothing can be resolved.
+    """
+    if not raw_id:
+        return None
+    try:
+        pk = int(raw_id)
+    except (ValueError, TypeError):
+        return None
+
+    # Direct application match
+    if InternshipApplication.objects.filter(pk=pk).exists():
+        return pk
+
+    # Try as Internship (execution record) PK → resolve via student + position
+    exec_record = Internship.objects.filter(pk=pk).select_related("student", "position").first()
+    if exec_record:
+        app = InternshipApplication.objects.filter(
+            student=exec_record.student,
+            position=exec_record.position,
+        ).order_by("-id").first()
+        if app:
+            return app.id
+
+    return None
 from core.services.notification_service import create_notification
 from core.permissions import IsAdvisorUser, IsExaminerUser
 
@@ -438,7 +468,35 @@ class CreateWeeklyLogbookAPIView(APIView):
             )
 
         if internship_id:
-            qs = qs.filter(internship_id=internship_id)
+            # Accept either the InternshipApplication PK or the active Internship PK.
+            internship_qs = WeeklyLogbook.objects.filter(internship_id=internship_id)
+            if internship_qs.exists():
+                qs = qs.filter(internship_id=internship_id)
+            else:
+                resolved_internship = None
+                if target_student if student_id else student:
+                    active_student = target_student if student_id else student
+                    active_internship = Internship.objects.select_related("position").filter(
+                        pk=internship_id,
+                        student=active_student,
+                    ).first()
+                    if active_internship and active_internship.position_id:
+                        resolved_internship = (
+                            InternshipApplication.objects.filter(
+                                student=active_student,
+                                position_id=active_internship.position_id,
+                            )
+                            .filter(
+                                models.Q(student_decision="ACCEPTED")
+                                | models.Q(dept_status="APPROVED")
+                            )
+                            .order_by("-created_at")
+                            .first()
+                        )
+                if resolved_internship:
+                    qs = qs.filter(internship=resolved_internship)
+                else:
+                    qs = qs.none()
 
         qs = qs.order_by("week_number")
         serializer = WeeklyLogbookSerializer(qs, many=True)
@@ -803,13 +861,44 @@ class StudentWeeklyLogbookListAPIView(APIView):
 
         student = request.user.id and request.user.student_profile
         internship_id = request.query_params.get("internship_id")
-        internship_qs = InternshipApplication.objects.filter(student=student).filter(
-            models.Q(student_decision="ACCEPTED") | models.Q(dept_status="APPROVED")
-        )
-        if internship_id:
-            internship_qs = internship_qs.filter(pk=internship_id)
+        internship = None
 
-        internship = internship_qs.order_by("-created_at").first()
+        if internship_id:
+            # Accept either an InternshipApplication PK or an Internship PK.
+            internship = InternshipApplication.objects.filter(
+                pk=internship_id,
+                student=student,
+            ).filter(
+                models.Q(student_decision="ACCEPTED") | models.Q(dept_status="APPROVED")
+            ).first()
+
+            if not internship:
+                active_internship = Internship.objects.select_related("position").filter(
+                    pk=internship_id,
+                    student=student,
+                ).first()
+
+                if active_internship and active_internship.position_id:
+                    internship = (
+                        InternshipApplication.objects.filter(
+                            student=student,
+                            position_id=active_internship.position_id,
+                        )
+                        .filter(
+                            models.Q(student_decision="ACCEPTED")
+                            | models.Q(dept_status="APPROVED")
+                        )
+                        .order_by("-created_at")
+                        .first()
+                    )
+
+        if not internship:
+            internship = (
+                InternshipApplication.objects.filter(student=student)
+                .filter(models.Q(student_decision="ACCEPTED") | models.Q(dept_status="APPROVED"))
+                .order_by("-created_at")
+                .first()
+            )
 
         if not internship:
             return Response([], status=status.HTTP_200_OK)
@@ -1081,7 +1170,11 @@ class CompanyWeeklyLogbookListAPIView(APIView):
 
         internship_id = request.query_params.get("internship_id")
         if internship_id:
-            qs = qs.filter(internship_id=internship_id)
+            resolved = resolve_application_id(internship_id)
+            if resolved:
+                qs = qs.filter(internship_id=resolved)
+            else:
+                qs = qs.none()
 
         serializer = AdvisorWeeklyLogbookSerializer(qs, many=True)
         return Response(serializer.data)

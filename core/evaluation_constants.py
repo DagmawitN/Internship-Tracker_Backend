@@ -7,9 +7,9 @@ Section weights: Report 20%, Logbook 5%, Student Performance 10% (35% total).
 REPORT_SCORE_FIELDS = {
     "report_format_score": 3,
     "organization_background_score": 3,
-    "activities_score": 3,
+    "activities_score": 4,
     "data_figure_table_score": 3,
-    "report_content_score": 3,
+    "report_content_score": 4,
     "recommendation_score": 2,
     "conclusion_score": 3,
 }

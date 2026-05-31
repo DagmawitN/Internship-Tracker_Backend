@@ -314,6 +314,8 @@ class StudentApplicationSerializer(serializers.ModelSerializer):
     )
     overall_status = serializers.CharField(read_only=True)
     advisor_name = serializers.SerializerMethodField()
+    examiner_name = serializers.SerializerMethodField()
+    examiner2_name = serializers.SerializerMethodField()
     applied_at = serializers.DateTimeField(source="created_at", read_only=True)
     resume_url = serializers.SerializerMethodField()
 
@@ -340,13 +342,14 @@ class StudentApplicationSerializer(serializers.ModelSerializer):
             "mentor_signed_at",
             "form_snapshot",
             "advisor_name",
+            "examiner_name",
+            "examiner2_name",
             "applied_at",
             "resume_url",
         ]
         read_only_fields = fields
 
     def get_advisor_name(self, obj):
-        # Check application-level advisor first, then fall back to student-level advisor
         if obj.advisor and obj.advisor.user:
             u = obj.advisor.user
             return u.get_full_name().strip() or u.username
@@ -354,6 +357,23 @@ class StudentApplicationSerializer(serializers.ModelSerializer):
             u = obj.student.advisor.user
             return u.get_full_name().strip() or u.username
         return None
+
+    def _get_examiner_names(self, obj):
+        from core.models import AdvisorAssignment
+        assignments = (
+            AdvisorAssignment.objects.filter(internship=obj, role="EXAMINER")
+            .select_related("advisor")
+            .order_by("id")
+        )
+        return [a.advisor.get_full_name() or a.advisor.username for a in assignments]
+
+    def get_examiner_name(self, obj):
+        names = self._get_examiner_names(obj)
+        return names[0] if names else None
+
+    def get_examiner2_name(self, obj):
+        names = self._get_examiner_names(obj)
+        return names[1] if len(names) > 1 else None
 
     def get_resume_url(self, obj):
         student = obj.student

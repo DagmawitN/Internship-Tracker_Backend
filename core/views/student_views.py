@@ -1,3 +1,4 @@
+from django.db import models
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import serializers
@@ -122,15 +123,46 @@ class StudentCurrentPlacementView(APIView):
             .first()
         )
 
+        internship_id = internship.id if internship else None
+
         if not internship and not application:
             return Response({"placement": None}, status=200)
 
         if internship:
+            # Get examiner assignments for the student's application
+            from core.models import AdvisorAssignment
+            app_for_examiners = (
+                InternshipApplication.objects.filter(
+                    student=student,
+                    position=internship.position,
+                )
+                .filter(
+                    models.Q(dept_status="APPROVED")
+                    | models.Q(student_decision="ACCEPTED")
+                    | models.Q(mentor_status="ACCEPTED")
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            examiner_names = []
+            if app_for_examiners:
+                examiner_assignments = (
+                    AdvisorAssignment.objects.filter(
+                        internship_id=app_for_examiners.id, role="EXAMINER"
+                    ).select_related("advisor").order_by("id")
+                )
+                examiner_names = [
+                    a.advisor.get_full_name() or a.advisor.username
+                    for a in examiner_assignments
+                ]
+
             return Response(
                 {
+                    "internship_id": internship_id,
                     "placement": {
                         "type": "internship",
-                        "id": internship.id,
+                        "id": app_for_examiners.id if app_for_examiners else internship.id,
+                        "application_id": app_for_examiners.id if app_for_examiners else None,
                         "status": internship.status,
                         "student_id": student.student_id,
                         "student_name": request.user.get_full_name().strip() or request.user.username,
@@ -143,6 +175,8 @@ class StudentCurrentPlacementView(APIView):
                         "end_date": internship.end_date,
                         "total_hours": internship.total_hours,
                         "advisor_name": student.advisor.user.get_full_name().strip() if getattr(student, "advisor", None) and student.advisor.user else None,
+                        "examiner_name": examiner_names[0] if len(examiner_names) > 0 else None,
+                        "examiner2_name": examiner_names[1] if len(examiner_names) > 1 else None,
                         "mentor_name": internship.mentor.user.get_full_name().strip() if internship.mentor and internship.mentor.user else None,
                         "supervisor_name": internship.supervisor.user.get_full_name().strip() if internship.supervisor and internship.supervisor.user else None,
                     }
@@ -151,11 +185,24 @@ class StudentCurrentPlacementView(APIView):
             )
 
         workflow_status = application.overall_status
+        # Get examiner assignments
+        from core.models import AdvisorAssignment
+        examiner_assignments = (
+            AdvisorAssignment.objects.filter(
+                internship_id=application.id, role="EXAMINER"
+            ).select_related("advisor").order_by("id")
+        )
+        examiner_names = [
+            a.advisor.get_full_name() or a.advisor.username
+            for a in examiner_assignments
+        ]
         return Response(
             {
+                "internship_id": internship_id,
                 "placement": {
                     "type": "application",
                     "id": application.id,
+                    "application_id": application.id,
                     "status": workflow_status,
                     "student_id": student.student_id,
                     "student_name": request.user.get_full_name().strip() or request.user.username,
@@ -167,7 +214,11 @@ class StudentCurrentPlacementView(APIView):
                     "start_date": application.requested_start_date,
                     "end_date": application.requested_end_date,
                     "total_hours": None,
-                    "advisor_name": application.advisor.user.get_full_name().strip() if application.advisor and application.advisor.user else None,
+                    "advisor_name": application.advisor.user.get_full_name().strip() if application.advisor and application.advisor.user else (
+                        student.advisor.user.get_full_name().strip() if getattr(student, "advisor", None) and student.advisor.user else None
+                    ),
+                    "examiner_name": examiner_names[0] if len(examiner_names) > 0 else None,
+                    "examiner2_name": examiner_names[1] if len(examiner_names) > 1 else None,
                     "mentor_name": application.mentor.user.get_full_name().strip() if application.mentor and application.mentor.user else None,
                     "supervisor_name": application.supervisor.user.get_full_name().strip() if application.supervisor and application.supervisor.user else None,
                     "overall_status": workflow_status,

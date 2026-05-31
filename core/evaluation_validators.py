@@ -19,8 +19,7 @@ def _validate_score_map(instance, field_limits, section_label):
             continue
         if value < 0:
             errors[field_name] = "Score cannot be negative."
-        elif value > max_score:
-            errors[field_name] = f"Score cannot exceed {max_score} for {section_label}."
+        
     if errors:
         raise ValidationError(errors)
 
