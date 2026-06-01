@@ -1296,3 +1296,39 @@ class AdvisorExaminerEvaluationsAPIView(APIView):
 
         serializer = ExaminerEvaluationSerializer(qs, many=True)
         return Response(serializer.data)
+
+
+class StudentExaminerEvaluationsAPIView(APIView):
+    """
+    GET /api/evaluations/examiner/for-student/?internship_id=<id>
+    Returns ExaminerEvaluation records for a specific internship if the
+    authenticated user is the student on that internship.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        internship_id = request.query_params.get("internship_id")
+        if not internship_id:
+            return Response([], status=status.HTTP_200_OK)
+
+        from core.models import InternshipApplication
+
+        # Ensure the requesting user is the student for this internship
+        internship = get_object_or_404(
+            InternshipApplication,
+            pk=internship_id,
+            student=getattr(request.user, "student_profile", None),
+        )
+
+        qs = (
+            ExaminerEvaluation.objects.filter(internship_id=internship_id)
+            .select_related(
+                "internship__student__user",
+                "internship__position__company",
+                "examiner",
+            )
+            .order_by("-submitted_at")
+        )
+        serializer = ExaminerEvaluationSerializer(qs, many=True)
+        return Response(serializer.data)

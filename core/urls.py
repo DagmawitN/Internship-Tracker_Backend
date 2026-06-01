@@ -147,6 +147,7 @@ from core.views.evaluation_views import (
     OverallEvaluationDetailAPIView,
     StudentEvaluationStatusAPIView,
     StudentInternshipResultsAPIView,
+    StudentExaminerEvaluationsAPIView,
 )
 from core.views.user_views import EligibleStudentBulkUploadView, StudentsList, UsersList, UserViewSet
 
@@ -576,6 +577,11 @@ urlpatterns = [
         "evaluations/examiner/for-advisor/",
         AdvisorExaminerEvaluationsAPIView.as_view(),
         name="examiner-evaluations-for-advisor",
+    ),
+    path(
+        "evaluations/examiner/for-student/",
+        StudentExaminerEvaluationsAPIView.as_view(),
+        name="examiner-evaluations-for-student",
     ),
     path(
         "evaluations/examiner/<int:pk>/",

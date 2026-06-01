@@ -102,8 +102,12 @@ def serialize_examiner_evaluation(ev, *, include_scores=True):
     data = {
         "id": ev.id,
         "examiner_id": ev.examiner_id,
+        "examiner_name": (
+            ev.examiner.get_full_name() or ev.examiner.username if ev.examiner else ""
+        ),
         "submitted_at": ev.submitted_at,
         "comments": ev.comments if include_scores else None,
+        "form_data": ev.form_data if include_scores else None,
     }
     if include_scores:
         data.update(

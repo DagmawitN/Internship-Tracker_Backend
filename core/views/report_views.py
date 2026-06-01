@@ -220,8 +220,16 @@ class ExaminerInternshipDocumentListAPIView(APIView):
 
         internship_ids = []
 
+        # Student: allow a student to view their own documents (including those requiring examiner review)
+        # This enables the Student Dashboard to request /documents/examiner/?internship_id=<id>
+        if hasattr(request.user, "student_profile"):
+            # List all internship applications for this student
+            internship_ids = list(
+                InternshipApplication.objects.filter(student=request.user.student_profile)
+                .values_list("id", flat=True)
+            )
         # Coordinator: department-scoped visibility for dashboard review.
-        if role_name == "COORDINATOR" and staff and staff.department_id:
+        elif role_name == "COORDINATOR" and staff and staff.department_id:
             internship_ids = list(
                 InternshipApplication.objects.filter(
                     student__department_id=staff.department_id
