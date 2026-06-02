@@ -179,6 +179,10 @@ class StudentCurrentPlacementView(APIView):
                         "examiner2_name": examiner_names[1] if len(examiner_names) > 1 else None,
                         "mentor_name": internship.mentor.user.get_full_name().strip() if internship.mentor and internship.mentor.user else None,
                         "supervisor_name": internship.supervisor.user.get_full_name().strip() if internship.supervisor and internship.supervisor.user else None,
+                        "dept_status": app_for_examiners.dept_status if app_for_examiners else "APPROVED",
+                        "mentor_status": app_for_examiners.mentor_status if app_for_examiners else "ACCEPTED",
+                        "student_decision": app_for_examiners.student_decision if app_for_examiners else "ACCEPTED",
+                        "applied_at": app_for_examiners.created_at if app_for_examiners else internship.created_at,
                     }
                 },
                 status=200,

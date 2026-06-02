@@ -41,6 +41,10 @@ from core.services.evaluation_workflow import (
     can_coordinator_finalize,
     examiner_internship_queryset,
     get_or_create_overall,
+    sync_overall_from_advisor,
+    sync_overall_from_company,
+    sync_overall_from_examiner,
+    sync_overall_from_examiner_signoff,
 )
 from core.evaluation_validators import (
     validate_advisor_assignment,
@@ -735,6 +739,17 @@ class CoordinatorOverallApprovalAPIView(APIView):
             overall.coordinator_comment = body.validated_data.get("comment", "")
             overall.calculate_final()
             overall.save()
+
+            # Mark the related Internship execution record as COMPLETED
+            from core.models import Internship as InternshipRecord
+            internship_record = InternshipRecord.objects.filter(
+                student=internship.student,
+                position=internship.position
+            ).order_by("-id").first()
+            if internship_record:
+                internship_record.status = "COMPLETED"
+                internship_record.save(update_fields=["status"])
+
             return Response(
                 OverallInternshipEvaluationSerializer(overall).data,
                 status=status.HTTP_200_OK,
@@ -976,10 +991,37 @@ class ExaminerOverallApprovalAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        from core.models import AdvisorAssignment
+
         serializer = ExaminerOverallApprovalSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        slot = str(serializer.validated_data["slot"])
+        requested_slot = serializer.validated_data.get("slot")
 
+        # Determine the user's correct slot based on AdvisorAssignment order (by ID)
+        assignments = (
+            AdvisorAssignment.objects.filter(internship=internship, role="EXAMINER")
+            .order_by("id")
+            .values_list("advisor_id", flat=True)
+        )
+        assignments_list = list(assignments)
+
+        try:
+            # Slot is 1-indexed
+            actual_slot_index = assignments_list.index(request.user.id)
+            actual_slot = str(actual_slot_index + 1)
+        except ValueError:
+            return Response(
+                {"detail": "User is not assigned as an examiner for this internship."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if requested_slot and str(requested_slot) != actual_slot:
+            return Response(
+                {"detail": f"Incorrect slot provided. You are assigned to slot {actual_slot}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        slot = actual_slot
         approvals = dict(overall.examiner_approval_state or {})
         approvals[slot] = {
             "approved": True,
@@ -988,6 +1030,10 @@ class ExaminerOverallApprovalAPIView(APIView):
         }
         overall.examiner_approval_state = approvals
         overall.save(update_fields=["examiner_approval_state", "updated_at"])
+
+        # Check if all examiners have now signed off
+        sync_overall_from_examiner_signoff(internship.id)
+        overall.refresh_from_db()
 
         return Response(
             {

@@ -498,10 +498,8 @@ class AdvisorMyStudentsView(generics.ListAPIView):
         advisor = get_object_or_404(Advisor, user=self.request.user)
         return (
             InternshipApplication.objects.filter(
-                student__advisor=advisor,
-            )
-            .filter(
-                models.Q(dept_status="APPROVED") | models.Q(student_decision="ACCEPTED")
+                advisor=advisor,
+                student_decision="ACCEPTED",
             )
             .select_related(
                 "student__user",
@@ -514,40 +512,6 @@ class AdvisorMyStudentsView(generics.ListAPIView):
             .order_by("-created_at")
         )
 
-    def list(self, request, *args, **kwargs):
-        response = super().list(request, *args, **kwargs)
-
-        # Enrich each application with examiner names from AdvisorAssignment
-        items = response.data if isinstance(response.data, list) else response.data.get("results", [])
-        if not items:
-            return response
-
-        app_ids = [item["id"] for item in items if item.get("id")]
-        examiner_assignments = (
-            AdvisorAssignment.objects.filter(
-                internship_id__in=app_ids,
-                role="EXAMINER",
-            )
-            .select_related("advisor")
-            .order_by("internship_id", "id")
-        )
-
-        # Build map: internship_id → [examiner1_name, examiner2_name]
-        examiner_map = {}
-        for assignment in examiner_assignments:
-            iid = assignment.internship_id
-            name = assignment.advisor.get_full_name() or assignment.advisor.username
-            if iid not in examiner_map:
-                examiner_map[iid] = []
-            examiner_map[iid].append(name)
-
-        for item in items:
-            iid = item.get("id")
-            names = examiner_map.get(iid, [])
-            item["examiner_name"] = names[0] if len(names) > 0 else ""
-            item["examiner2_name"] = names[1] if len(names) > 1 else ""
-
-        return response
 
 
 # ---------------------------------------------------------------------------

@@ -122,6 +122,7 @@ class InternshipPositionSerializer(serializers.ModelSerializer):
     accepted_applications = serializers.IntegerField(read_only=True)
     available_slots = serializers.SerializerMethodField()
     company_name = serializers.CharField(source="company.company_name", read_only=True)
+    is_applied = serializers.SerializerMethodField()
     # Expose a friendly `internship_type` field for frontend (maps to model.work_mode)
     # Accept internship_type on input and override representation in to_representation
     internship_type = serializers.CharField(required=False)
@@ -129,7 +130,20 @@ class InternshipPositionSerializer(serializers.ModelSerializer):
     class Meta:
         model = InternshipPosition
         fields = "__all__"
-        read_only_fields = ("company", "created_at", "updated_at")
+        read_only_fields = ("company", "created_at", "updated_at", "is_applied")
+
+    def get_is_applied(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user or not request.user.is_authenticated:
+            return False
+
+        try:
+            student = request.user.student_profile
+            return InternshipApplication.objects.filter(
+                student=student, position=obj
+            ).exists()
+        except Exception:
+            return False
 
     def get_available_slots(self, obj):
         if obj.max_applicants is None:
@@ -401,6 +415,9 @@ class InternshipRequestFormSerializer(serializers.ModelSerializer):
     student_email = serializers.EmailField(source="student.user.email", read_only=True)
     student_user_id = serializers.IntegerField(source="student.user.id", read_only=True)
     resume_url = serializers.SerializerMethodField()
+    advisor_name = serializers.SerializerMethodField()
+    examiner_name = serializers.SerializerMethodField()
+    examiner2_name = serializers.SerializerMethodField()
 
     class Meta:
         model = InternshipApplication
@@ -428,6 +445,9 @@ class InternshipRequestFormSerializer(serializers.ModelSerializer):
             "mentor_signed_at",
             "form_snapshot",
             "resume_url",
+            "advisor_name",
+            "examiner_name",
+            "examiner2_name",
             "created_at",
         ]
         read_only_fields = fields
@@ -444,3 +464,27 @@ class InternshipRequestFormSerializer(serializers.ModelSerializer):
             except Exception:
                 return None
         return None
+
+    def get_advisor_name(self, obj):
+        if obj.advisor and obj.advisor.user:
+            return obj.advisor.user.get_full_name().strip() or obj.advisor.user.username
+        if obj.student.advisor and obj.student.advisor.user:
+            return obj.student.advisor.user.get_full_name().strip() or obj.student.advisor.user.username
+        return ""
+
+    def _get_examiner_names(self, obj):
+        from core.models import AdvisorAssignment
+        assignments = (
+            AdvisorAssignment.objects.filter(internship=obj, role="EXAMINER")
+            .select_related("advisor")
+            .order_by("id")
+        )
+        return [a.advisor.get_full_name() or a.advisor.username for a in assignments]
+
+    def get_examiner_name(self, obj):
+        names = self._get_examiner_names(obj)
+        return names[0] if names else ""
+
+    def get_examiner2_name(self, obj):
+        names = self._get_examiner_names(obj)
+        return names[1] if len(names) > 1 else ""

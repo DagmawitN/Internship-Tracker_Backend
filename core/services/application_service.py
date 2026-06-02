@@ -102,6 +102,11 @@ def process_coordinator_review(application, actor, action: str, signature: str =
     if application.dept_status != "PENDING":
         raise ValueError("Application has already been reviewed by the coordinator.")
 
+    if application.mentor_status != "ACCEPTED":
+        raise ValueError(
+            "This application must be accepted by the company mentor before coordinator review."
+        )
+
     if action not in ("approve", "reject"):
         raise ValueError("Action must be 'approve' or 'reject'.")
 
@@ -109,7 +114,6 @@ def process_coordinator_review(application, actor, action: str, signature: str =
 
     if action == "approve":
         application.dept_status = "APPROVED"
-        application.mentor_status = "PENDING"
         application.coordinator_signature = signature or (
             actor.get_full_name() or actor.username
         )
@@ -117,7 +121,6 @@ def process_coordinator_review(application, actor, action: str, signature: str =
         application.save(
             update_fields=[
                 "dept_status",
-                "mentor_status",
                 "coordinator_signature",
                 "coordinator_signed_at",
             ]

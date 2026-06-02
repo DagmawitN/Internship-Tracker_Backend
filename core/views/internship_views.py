@@ -251,6 +251,7 @@ class InternshipApplicationCreateView(generics.CreateAPIView):
             student=student,
             position=position,
             mentor=company_mentor,
+            mentor_status="PENDING",
             form_snapshot=snapshot,
         )
 
@@ -764,6 +765,7 @@ class CoordinatorPendingApplicationsListView(generics.ListAPIView):
             InternshipApplication.objects.filter(
                 student__department=coordinator.department,
                 dept_status=InternshipApplication.DeptStatus.PENDING,
+                mentor_status="ACCEPTED",
             )
             .select_related(
                 "student__user",

@@ -50,7 +50,10 @@ def sync_overall_from_advisor(advisor_eval):
     if advisor_eval.status == AdvisorEvaluation.Status.APPROVED:
         overall.advisor_approved = True
         overall.advisor_approved_at = advisor_eval.approved_at
-        overall.status = OverallInternshipEvaluation.Status.PENDING_EXAMINERS
+        if overall.examiner_completed:
+            overall.status = OverallInternshipEvaluation.Status.PENDING_COORDINATOR
+        else:
+            overall.status = OverallInternshipEvaluation.Status.PENDING_EXAMINERS
     elif advisor_eval.status == AdvisorEvaluation.Status.REJECTED:
         overall.status = OverallInternshipEvaluation.Status.REJECTED
         overall.advisor_approved = False
@@ -296,3 +299,51 @@ def build_advisor_queue_item(internship):
         "final_report_status": final_report.status if final_report else None,
         "missing_requirements": missing,
     }
+
+
+def sync_overall_from_examiner_signoff(internship_id):
+    """
+    Check if all assigned examiners have signed off on the overall evaluation.
+    If so, advance status to PENDING_COORDINATOR.
+    """
+    from core.models import (
+        AdvisorAssignment,
+        InternshipApplication,
+        OverallInternshipEvaluation,
+    )
+
+    internship = InternshipApplication.objects.filter(pk=internship_id).first()
+    if not internship:
+        return
+    overall = get_or_create_overall(internship)
+
+    # Get explicitly assigned examiners
+    assignments = (
+        AdvisorAssignment.objects.filter(internship=internship, role="EXAMINER")
+        .order_by("id")
+    )
+    assigned_count = assignments.count()
+    if assigned_count == 0:
+        return
+
+    approvals = dict(overall.examiner_approval_state or {})
+    # Map slot keys ('1', '2') to approved status
+    approved_count = 0
+    for i, a in enumerate(assignments):
+        slot_key = str(i + 1)
+        if approvals.get(slot_key, {}).get("approved"):
+            approved_count += 1
+
+    if approved_count >= assigned_count:
+        overall.examiner_completed = True
+        overall.examiner_completed_at = timezone.now()
+        if overall.advisor_approved:
+            overall.status = OverallInternshipEvaluation.Status.PENDING_COORDINATOR
+        overall.save(
+            update_fields=[
+                "examiner_completed",
+                "examiner_completed_at",
+                "status",
+                "updated_at",
+            ]
+        )

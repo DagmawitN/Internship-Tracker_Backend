@@ -396,10 +396,15 @@ class InternshipApplication(TimeStampedModel):
             or self.advisor_status == "REJECTED"
         ):
             return "DECLINED"
-        if self.mentor_status == "ACCEPTED":
+
+        # New flow: Company -> Coordinator -> Student
+        if self.mentor_status == "ACCEPTED" and self.dept_status == "APPROVED":
             return "OFFER_RECEIVED"
+        if self.mentor_status == "ACCEPTED":
+            return "AWAITING_COORDINATOR"
         if self.dept_status == "APPROVED":
             return "AWAITING_MENTOR"
+
         return "PENDING"
 
     def __str__(self):
