@@ -189,7 +189,7 @@ class FinalIndustryEvaluationDetailAPIView(generics.RetrieveAPIView):
 
 
 class AdvisorEvaluationListCreateAPIView(generics.ListCreateAPIView):
-    """POST /api/evaluations/advisor/  GET /api/evaluations/advisor/"""
+    """POST /api/evaluations/advisor/   GET /api/evaluations/advisor/"""
 
     permission_classes = [IsAuthenticated, IsAdvisorUser]
     serializer_class = AdvisorEvaluationSerializer
