@@ -97,7 +97,36 @@ def sync_overall_from_company(company_eval):
         return
     overall = get_or_create_overall(application)
     overall.company_evaluation = company_eval
-    overall.company_score = company_eval.overall_student_performance
+    overall.company_final_score = company_eval.overall_student_performance
+    
+    # Calculate monthly average
+    from core.models import CompanyEvaluationStatus, MonthlyIndustryEvaluation
+    evals = MonthlyIndustryEvaluation.objects.filter(
+        internship=application,
+        status=CompanyEvaluationStatus.ADVISOR_APPROVED
+    )
+    if not evals.exists():
+        evals = MonthlyIndustryEvaluation.objects.filter(internship=application)
+    
+    if evals.exists():
+        performance_scores = []
+        for e in evals:
+            form_data = e.form_data or {}
+            # Extract monthlyPerformance from form_data, fallback to total_score
+            perf = form_data.get("monthlyPerformance")
+            if perf is not None:
+                performance_scores.append(float(perf))
+            else:
+                performance_scores.append(float(e.total_score))
+        
+        avg = sum(performance_scores) / len(performance_scores)
+        overall.company_monthly_avg = Decimal(str(round(avg, 2)))
+    else:
+        overall.company_monthly_avg = Decimal("0")
+
+    # Update company_score (Total)
+    overall.company_score = (overall.company_monthly_avg or 0) + (overall.company_final_score or 0)
+    
     overall.calculate_final()
     overall.save()
 

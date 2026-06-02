@@ -56,6 +56,8 @@ from core.views.department_views import DepartmentViewSet
 from core.views.evaluation_views import (
     AdvisorEvaluationDetailAPIView,
     AdvisorEvaluationListCreateAPIView,
+    ExaminerOverallApprovalAPIView,
+    ExaminerOverallQueueAPIView,
     FinalIndustryEvaluationDetailAPIView,
     FinalIndustryEvaluationListCreateAPIView,
 )
@@ -135,6 +137,7 @@ from core.views.evaluation_views import (
     CompanyMonthlyEvaluationUpsertAPIView,
     CoordinatorAdvisorEvaluationAPIView,
     CoordinatorOverallApprovalAPIView,
+    CoordinatorOverallQueueAPIView,
     ExaminerEvaluationDetailAPIView,
     ExaminerEvaluationListCreateAPIView,
     FinalIndustryEvaluationApproveAPIView,
@@ -587,6 +590,21 @@ urlpatterns = [
         "evaluations/examiner/<int:pk>/",
         ExaminerEvaluationDetailAPIView.as_view(),
         name="examiner-evaluation-detail",
+    ),
+    path(
+        "evaluations/examiner/<int:internship_id>/overall-approval/",
+        ExaminerOverallApprovalAPIView.as_view(),
+        name="examiner-overall-approval",
+    ),
+    path(
+        "evaluations/examiner/overall-queue/",
+        ExaminerOverallQueueAPIView.as_view(),
+        name="examiner-overall-queue",
+    ),
+    path(
+        "evaluations/coordinator/overall-queue/",
+        CoordinatorOverallQueueAPIView.as_view(),
+        name="coordinator-overall-queue",
     ),
     # ------------------------------------------------------------------ Company evaluations (upsert)
     path(

@@ -910,6 +910,12 @@ class OverallInternshipEvaluation(TimeStampedModel):
     company_score = models.DecimalField(
         max_digits=5, decimal_places=3, null=True, blank=True
     )
+    company_monthly_avg = models.DecimalField(
+        max_digits=5, decimal_places=3, null=True, blank=True
+    )
+    company_final_score = models.DecimalField(
+        max_digits=5, decimal_places=3, null=True, blank=True
+    )
     final_total_score = models.DecimalField(
         max_digits=5, decimal_places=3, null=True, blank=True
     )
@@ -926,6 +932,7 @@ class OverallInternshipEvaluation(TimeStampedModel):
     examiner_completed_at = models.DateTimeField(null=True, blank=True)
     coordinator_approved_at = models.DateTimeField(null=True, blank=True)
     coordinator_comment = models.TextField(blank=True)
+    examiner_approval_state = models.JSONField(default=dict, blank=True)
     visible_to_student = models.BooleanField(default=False)
     approved_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

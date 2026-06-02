@@ -26,6 +26,7 @@ from core.serializers.evaluation_serializers import (
     AdvisorQueueSerializer,
     CoordinatorOverallApprovalSerializer,
     ExaminerEvaluationSerializer,
+    ExaminerOverallApprovalSerializer,
     FinalIndustryEvaluationSerializer,
     MonthlyIndustryEvaluationSerializer,
     OverallInternshipEvaluationSerializer,
@@ -38,11 +39,13 @@ from core.services.evaluation_workflow import (
     advisor_internship_queryset,
     build_advisor_queue_item,
     can_coordinator_finalize,
+    examiner_internship_queryset,
     get_or_create_overall,
 )
 from core.evaluation_validators import (
     validate_advisor_assignment,
     validate_internship_prerequisites_for_advisor_eval,
+    validate_examiner_assignment,
 )
 
 
@@ -952,6 +955,134 @@ class ExaminerEvaluationDetailAPIView(APIView):
         return Response(ExaminerEvaluationSerializer(instance).data)
 
 
+class ExaminerOverallApprovalAPIView(APIView):
+    """PATCH /api/evaluations/examiner/<internship_id>/overall-approval/"""
+
+    permission_classes = [IsAuthenticated, IsExaminerUser]
+
+    def patch(self, request, internship_id):
+        internship = get_object_or_404(InternshipApplication, pk=internship_id)
+
+        try:
+            validate_examiner_assignment(request.user, internship)
+        except DjangoValidationError as exc:
+            payload = exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages[0]}
+            return Response(payload, status=status.HTTP_403_FORBIDDEN)
+
+        overall = get_or_create_overall(internship)
+        if not overall.advisor_approved:
+            return Response(
+                {"detail": "Advisor approval is required before examiner sign-off."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ExaminerOverallApprovalSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        slot = str(serializer.validated_data["slot"])
+
+        approvals = dict(overall.examiner_approval_state or {})
+        approvals[slot] = {
+            "approved": True,
+            "approved_at": timezone.now().isoformat(),
+            "examiner_id": request.user.id,
+        }
+        overall.examiner_approval_state = approvals
+        overall.save(update_fields=["examiner_approval_state", "updated_at"])
+
+        return Response(
+            {
+                "message": f"Examiner {slot} overall sign-off recorded.",
+                "overall": OverallInternshipEvaluationSerializer(overall).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ExaminerOverallQueueAPIView(APIView):
+    """GET /api/evaluations/examiner/overall-queue/"""
+
+    permission_classes = [IsAuthenticated, IsExaminerUser]
+
+    def get(self, request):
+        assigned = examiner_internship_queryset(request.user).select_related(
+            "student__user",
+            "position__company",
+            "advisor",
+            "overall_evaluation",
+        )
+        user_id = str(request.user.id)
+        queue = []
+
+        for internship in assigned:
+            overall = get_or_create_overall(internship)
+            if not overall.advisor_approved:
+                continue
+
+            approvals = dict(overall.examiner_approval_state or {})
+            if any(str(item.get("examiner_id")) == user_id and item.get("approved") for item in approvals.values()):
+                continue
+
+            queue.append(OverallInternshipEvaluationSerializer(overall).data)
+
+        return Response({"count": len(queue), "queue": queue}, status=status.HTTP_200_OK)
+
+
+class CoordinatorOverallQueueAPIView(APIView):
+    """GET /api/evaluations/coordinator/overall-queue/"""
+
+    permission_classes = [IsAuthenticated, IsCoordinatorUser]
+
+    def get(self, request):
+        staff = getattr(request.user, "staff", None)
+        if not staff or not staff.department_id:
+            return Response(
+                {"detail": "Coordinator must be assigned to a department."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        assigned = InternshipApplication.objects.filter(
+            student__department=staff.department
+        ).select_related(
+            "student__user",
+            "position__company",
+            "advisor",
+            "overall_evaluation",
+        )
+        from core.models import OverallInternshipEvaluation as _OIE
+        queue = []
+
+        for internship in assigned:
+            overall = get_or_create_overall(internship)
+            
+            # Re-fetch with relations for score calculation
+            try:
+                overall = _OIE.objects.select_related(
+                    "advisor_evaluation",
+                    "examiner_one_evaluation",
+                    "examiner_two_evaluation",
+                    "company_evaluation",
+                    "internship__student__user",
+                ).get(pk=overall.pk)
+            except _OIE.DoesNotExist:
+                continue
+
+            data = OverallInternshipEvaluationSerializer(overall).data
+            
+            # Determine if it needs coordinator approval (the "queue" criteria)
+            approvals = dict(overall.examiner_approval_state or {})
+            has_examiner_approvals = approvals and all(item.get("approved") for item in approvals.values())
+            
+            data["is_pending_approval"] = (
+                overall.advisor_approved and 
+                has_examiner_approvals and 
+                not overall.coordinator_approved
+            )
+            
+            queue.append(data)
+
+        return Response({"count": len(queue), "queue": queue}, status=status.HTTP_200_OK)
+
+
 # ---------------------------------------------------------------------------
 # Company: upsert monthly evaluation (create or update)
 # ---------------------------------------------------------------------------
@@ -1045,6 +1176,8 @@ class CompanyMonthlyEvaluationUpsertAPIView(APIView):
                 f"Month {month_number} evaluation for internship {internship_id}."
             ),
         )
+        from core.services.evaluation_workflow import sync_overall_from_company
+        sync_overall_from_company(instance)
 
         return Response(
             MonthlyIndustryEvaluationSerializer(instance).data,
@@ -1207,6 +1340,8 @@ class CompanyFinalEvaluationUpsertAPIView(APIView):
                 f"final evaluation for internship {internship_record.id}."
             ),
         )
+        from core.services.evaluation_workflow import sync_overall_from_company
+        sync_overall_from_company(instance)
 
         return Response(
             FinalIndustryEvaluationSerializer(instance).data,

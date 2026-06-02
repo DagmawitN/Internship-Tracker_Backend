@@ -464,6 +464,10 @@ class OverallInternshipEvaluationSerializer(serializers.ModelSerializer):
     student_full_name = serializers.SerializerMethodField()
     can_finalize = serializers.SerializerMethodField()
     missing_requirements = serializers.SerializerMethodField()
+    examiner_one_score = serializers.SerializerMethodField()
+    examiner_two_score = serializers.SerializerMethodField()
+    company_monthly_avg = serializers.SerializerMethodField()
+    company_final_score = serializers.SerializerMethodField()
     advisor_evaluation_detail = AdvisorEvaluationSerializer(
         source="advisor_evaluation", read_only=True
     )
@@ -478,10 +482,15 @@ class OverallInternshipEvaluationSerializer(serializers.ModelSerializer):
             "advisor_approved",
             "examiner_completed",
             "coordinator_approved",
+            "examiner_approval_state",
             "visible_to_student",
             "advisor_score",
             "examiner_average_score",
+            "examiner_one_score",
+            "examiner_two_score",
             "company_score",
+            "company_monthly_avg",
+            "company_final_score",
             "final_total_score",
             "final_grade",
             "advisor_approved_at",
@@ -510,7 +519,35 @@ class OverallInternshipEvaluationSerializer(serializers.ModelSerializer):
         _, missing = can_coordinator_finalize(obj)
         return missing
 
+    def get_examiner_one_score(self, obj):
+        if obj.examiner_one_evaluation:
+            form_data = obj.examiner_one_evaluation.form_data or {}
+            final_mark = form_data.get("finalMark")
+            if final_mark is not None:
+                return float(final_mark)
+            return float(obj.examiner_one_evaluation.weighted_score or 0)
+        return 0
+
+    def get_examiner_two_score(self, obj):
+        if obj.examiner_two_evaluation:
+            form_data = obj.examiner_two_evaluation.form_data or {}
+            final_mark = form_data.get("finalMark")
+            if final_mark is not None:
+                return float(final_mark)
+            return float(obj.examiner_two_evaluation.weighted_score or 0)
+        return 0
+
+    def get_company_monthly_avg(self, obj):
+        return float(obj.company_monthly_avg or 0)
+
+    def get_company_final_score(self, obj):
+        return float(obj.company_final_score or 0)
+
 
 class CoordinatorOverallApprovalSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=["approve", "reject"])
     comment = serializers.CharField(required=False, allow_blank=True)
+
+
+class ExaminerOverallApprovalSerializer(serializers.Serializer):
+    slot = serializers.IntegerField(min_value=1, max_value=2)

@@ -19,7 +19,8 @@ def _validate_score_map(instance, field_limits, section_label):
             continue
         if value < 0:
             errors[field_name] = "Score cannot be negative."
-        
+        elif value > max_score:
+            errors[field_name] = f"Score cannot exceed {max_score} for {section_label}."
     if errors:
         raise ValidationError(errors)
 
@@ -75,26 +76,10 @@ def validate_examiner_assignment(user, internship):
 
 
 def validate_internship_prerequisites_for_advisor_eval(internship):
-    """Require final report and at least one submitted logbook before advisor approval."""
-    from core.models import Report, WeeklyLogbook
+    """Require at least one submitted logbook before advisor approval."""
+    from core.models import WeeklyLogbook
 
     errors = []
-    final_report = Report.objects.filter(
-        internship=internship, report_type="FINAL"
-    ).first()
-    if not final_report:
-        errors.append("Final internship report must be submitted.")
-    elif final_report.status not in (
-        "SUBMITTED",
-        "EXAMINER_APPROVED",
-        "ADVISOR_APPROVED",
-        "REVIEWED",
-        "APPROVED",
-    ):
-        errors.append(
-            "Final report must be submitted and reviewed by examiner."
-        )
-
     logbook_count = WeeklyLogbook.objects.filter(
         internship=internship,
         status__in=("SUBMITTED", "VERIFIED", "REVIEWED", "COMPANY_VERIFIED", "APPROVED"),
