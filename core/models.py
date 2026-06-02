@@ -1251,10 +1251,13 @@ class FinalIndustryEvaluation(TimeStampedModel):
 
         # Overall student performance = (total_mark / 60) * 20
         # Max score is 60 (5*5 + 7*5), converted to 20 points scale
+        from decimal import Decimal
         if self.total_mark > 0:
-            self.overall_student_performance = (self.total_mark / 60) * 20
+            # Use Decimal(str(round(...))) for robust float-to-decimal conversion
+            val = (self.total_mark / 60) * 20
+            self.overall_student_performance = Decimal(str(round(val, 3)))
         else:
-            self.overall_student_performance = 0
+            self.overall_student_performance = Decimal("0")
 
     def save(self, *args, **kwargs):
         """Auto-calculate totals before saving."""

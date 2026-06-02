@@ -137,7 +137,9 @@ def sync_overall_from_company(company_eval):
         overall.company_monthly_avg = Decimal("0")
 
     # Update company_score (Total)
-    overall.company_score = (overall.company_monthly_avg or 0) + (overall.company_final_score or 0)
+    c_monthly = Decimal(str(overall.company_monthly_avg or 0))
+    c_final = Decimal(str(overall.company_final_score or 0))
+    overall.company_score = c_monthly + c_final
 
     overall.calculate_final()
     overall.save()
