@@ -785,7 +785,7 @@ class AdvisorEvaluation(TimeStampedModel):
 
 
 class ExaminerEvaluation(TimeStampedModel):
-    """Examiner panel evaluation; two slots contribute up to 45% combined."""
+    """Examiner panel evaluation; two slots contribute up to 25% combined."""
 
     internship = models.ForeignKey(
         InternshipApplication,
