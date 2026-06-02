@@ -83,7 +83,7 @@ def sync_overall_from_examiner(internship_id):
 
 
 def sync_overall_from_company(company_eval):
-    if not company_eval or not company_eval.internship_id:
+    if not company_eval or not company_eval.internship_id:  #hi
         return
 
     from core.models import FinalIndustryEvaluation, MonthlyIndustryEvaluation
