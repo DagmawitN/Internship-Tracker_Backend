@@ -85,29 +85,41 @@ def sync_overall_from_examiner(internship_id):
 def sync_overall_from_company(company_eval):
     if not company_eval or not company_eval.internship_id:
         return
-    # FinalIndustryEvaluation.internship is an Internship (execution) record,
-    # but OverallInternshipEvaluation.internship is an InternshipApplication.
-    # Resolve the application from the execution record.
-    internship_record = company_eval.internship
-    application = InternshipApplication.objects.filter(
-        student=internship_record.student,
-        position=internship_record.position,
-    ).order_by("-id").first()
+
+    from core.models import FinalIndustryEvaluation, MonthlyIndustryEvaluation
+
+    # MonthlyIndustryEvaluation.internship is an InternshipApplication.
+    # FinalIndustryEvaluation.internship is an Internship (execution) record.
+    if isinstance(company_eval, MonthlyIndustryEvaluation):
+        application = company_eval.internship
+    elif isinstance(company_eval, FinalIndustryEvaluation):
+        internship_record = company_eval.internship
+        application = InternshipApplication.objects.filter(
+            student=internship_record.student,
+            position=internship_record.position,
+        ).order_by("-id").first()
+    else:
+        # Unknown evaluation type
+        return
+
     if not application:
         return
+
     overall = get_or_create_overall(application)
-    overall.company_evaluation = company_eval
-    overall.company_final_score = company_eval.overall_student_performance
-    
-    # Calculate monthly average
-    from core.models import CompanyEvaluationStatus, MonthlyIndustryEvaluation
+
+    # Only link and update final score if this is the final evaluation
+    if isinstance(company_eval, FinalIndustryEvaluation):
+        overall.company_evaluation = company_eval
+        overall.company_final_score = company_eval.overall_student_performance
+
+    # Recalculate monthly average regardless of which type triggered the sync
     evals = MonthlyIndustryEvaluation.objects.filter(
         internship=application,
         status=CompanyEvaluationStatus.ADVISOR_APPROVED
     )
     if not evals.exists():
         evals = MonthlyIndustryEvaluation.objects.filter(internship=application)
-    
+
     if evals.exists():
         performance_scores = []
         for e in evals:
@@ -118,7 +130,7 @@ def sync_overall_from_company(company_eval):
                 performance_scores.append(float(perf))
             else:
                 performance_scores.append(float(e.total_score))
-        
+
         avg = sum(performance_scores) / len(performance_scores)
         overall.company_monthly_avg = Decimal(str(round(avg, 2)))
     else:
@@ -126,7 +138,7 @@ def sync_overall_from_company(company_eval):
 
     # Update company_score (Total)
     overall.company_score = (overall.company_monthly_avg or 0) + (overall.company_final_score or 0)
-    
+
     overall.calculate_final()
     overall.save()
 
