@@ -115,7 +115,7 @@ MIDDLEWARE = [
 ]
 
 if _has_module("whitenoise"):
-    MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")
+    MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")  #hi
 
 if _has_module("corsheaders"):
     # Put it right after SessionMiddleware
