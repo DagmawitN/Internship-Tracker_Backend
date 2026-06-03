@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import models, transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import serializers
@@ -21,9 +21,15 @@ class AcceptOfferView(APIView):
     permission_classes = [IsAuthenticated, IsStudentUser]
     serializer_class = AcceptOfferSerializer
 
+    @transaction.atomic
     def post(self, request, pk):
+        # Lock the student profile to prevent race conditions when accepting multiple offers
+        from core.models import Student
+        student = Student.objects.select_for_update().get(pk=request.user.student_profile.pk)
+        
         application = get_object_or_404(
-            InternshipApplication, pk=pk, student=request.user.student_profile
+            InternshipApplication,
+            pk=pk, student=student
         )
 
         if application.dept_status != "APPROVED":
@@ -36,6 +42,9 @@ class AcceptOfferView(APIView):
 
         if application.student_decision == "ACCEPTED":
             raise ValidationError("Already accepted")
+
+        if application.student_decision == "DECLINED":
+            raise ValidationError("You have already declined this offer or another offer was accepted.")
 
         position = application.position
         accepted_count = InternshipApplication.objects.filter(
@@ -50,7 +59,7 @@ class AcceptOfferView(APIView):
 
         # Prevent multiple active or scheduled internships
         if Internship.objects.filter(
-            student=application.student, status__in=["NOT_STARTED", "ONGOING"]
+            student=student, status__in=["NOT_STARTED", "ONGOING"]
         ).exists():
             raise ValidationError("You already have an active internship")
 
@@ -58,7 +67,7 @@ class AcceptOfferView(APIView):
         end_date_raw = request.data.get("end_date")
 
         internship = Internship.objects.create(
-            student=application.student,
+            student=student,
             position=application.position,
             company=application.position.company,
             mentor=application.mentor,
@@ -68,9 +77,9 @@ class AcceptOfferView(APIView):
             status="NOT_STARTED",
         )
 
-        # Auto-decline all other offers
+        # Auto-decline all other applications for this student
         InternshipApplication.objects.filter(
-            student=application.student, mentor_status="ACCEPTED"
+            student=application.student
         ).exclude(id=application.id).update(student_decision="DECLINED")
 
         from core.services.application_service import process_student_confirmation

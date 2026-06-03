@@ -224,6 +224,14 @@ class InternshipApplicationCreateView(generics.CreateAPIView):
         ).exists():
             raise ValidationError("Already applied")
 
+        from core.models import Internship
+        if Internship.objects.filter(
+            student=self.request.user.student_profile, status__in=["NOT_STARTED", "ONGOING"]
+        ).exists() or InternshipApplication.objects.filter(
+            student=self.request.user.student_profile, student_decision="ACCEPTED"
+        ).exists():
+            raise ValidationError("You already have an active internship or accepted offer")
+
         from core.services.application_service import build_form_snapshot
         from core.services.audit_service import log_audit_event
 
@@ -814,6 +822,7 @@ class CoordinatorApprovedApplicationsListView(generics.ListAPIView):
                 student__department=coordinator.department,
                 dept_status=InternshipApplication.DeptStatus.APPROVED,
             )
+            .exclude(student_decision="DECLINED")
             .select_related(
                 "student__user",
                 "student__department",

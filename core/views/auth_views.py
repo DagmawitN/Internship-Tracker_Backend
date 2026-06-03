@@ -316,6 +316,10 @@ class LoginView(generics.GenericAPIView):
         user_payload = {
             "id": user.id,
             "email": user.email,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "full_name": f"{user.first_name} {user.last_name}".strip(),
             "role": user.role.role_name,
             "department": department_name,
             "department_id": department_id,
