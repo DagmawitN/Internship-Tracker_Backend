@@ -19,15 +19,27 @@ from core.models import (
 
 
 def compute_final_grade(score):
-    """Map numeric total (0–100) to letter grade."""
+    """Map numeric total (0–100) to letter grade based on standard scale."""
     s = float(score or 0)
-    if s >= 90:
+    if s >= 95:
+        return "A+"
+    if s >= 85:
         return "A"
     if s >= 80:
-        return "B"
+        return "A-"
+    if s >= 75:
+        return "B+"
     if s >= 70:
-        return "C"
+        return "B"
+    if s >= 65:
+        return "B-"
     if s >= 60:
+        return "C+"
+    if s >= 55:
+        return "C"
+    if s >= 50:
+        return "C-"
+    if s >= 40:
         return "D"
     return "F"
 
@@ -343,6 +355,9 @@ def sync_overall_from_examiner_signoff(internship_id):
             update_fields=[
                 "examiner_completed",
                 "examiner_completed_at",
+                "examiner_average_score",
+                "final_total_score",
+                "final_grade",
                 "status",
                 "updated_at",
             ]

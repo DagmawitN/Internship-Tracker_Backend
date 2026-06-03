@@ -969,8 +969,7 @@ class OverallInternshipEvaluation(TimeStampedModel):
         self.final_grade = compute_final_grade(self.final_total_score)
 
     def save(self, *args, **kwargs):
-        if self.advisor_score is not None or self.company_score is not None:
-            self.calculate_final()
+        self.calculate_final()
         super().save(*args, **kwargs)
 
     def __str__(self):
